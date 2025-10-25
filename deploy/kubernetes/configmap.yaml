@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: google-drive-worker-config
+  namespace: integrations
+  labels:
+    app: google-drive-worker
+    component: configuration
+data:
+  # Control Plane Configuration
+  control_plane_base_url: "https://control-plane.internal.clustera.ai"
+
+  # S3 Configuration
+  s3_region: "us-west-2"
+
+  # Kafka Topics
+  kafka_trigger_topic: "integration.trigger"
+  kafka_webhook_topic: "webhook.raw"
+  kafka_ingestion_topic: "ingestion.data"
+  kafka_error_topic: "integration.errors"
+
+  # Worker Settings
+  worker_health_check_interval: "30"
+  worker_shutdown_timeout: "30"
+
+  # API Configuration
+  google_oauth_token_url: "https://oauth2.googleapis.com/token"
+  google_oauth_auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
+
+  # Feature Flags
+  enable_metrics: "true"
+  enable_tracing: "false"
+  enable_debug_logging: "false"
+
+  # Performance Tuning
+  connection_pool_size: "20"
+  connection_timeout: "30"
+  read_timeout: "60"
+
+  # Retry Configuration
+  max_retries: "3"
+  retry_backoff_base: "2"
+  retry_backoff_max: "60"

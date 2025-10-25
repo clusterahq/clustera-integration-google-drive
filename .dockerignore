@@ -1,0 +1,98 @@
+# Git
+.git
+.gitignore
+.gitmodules
+
+# GitHub
+.github/
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.coverage
+coverage.xml
+*.cover
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+tests/
+test_*.py
+*_test.py
+conftest.py
+
+# Documentation
+docs/
+*.md
+!README.md
+LICENSE
+CONTRIBUTING.md
+CHANGELOG.md
+
+# Configuration
+.env
+.env.*
+!.env.example
+*.yaml.example
+
+# Logs
+*.log
+logs/
+
+# Local development
+deploy/mock/
+deploy/docker-compose.yml
+deploy/docker-compose.override.yml
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+azure-pipelines.yml
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Security
+*.pem
+*.key
+*.crt
+*.p12
+secrets/

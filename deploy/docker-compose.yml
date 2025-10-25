@@ -1,0 +1,187 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+
+  localstack:
+    image: localstack/localstack:latest
+    container_name: localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3
+      - DEBUG=0
+      - DATA_DIR=/tmp/localstack/data
+      - AWS_DEFAULT_REGION=us-west-2
+    volumes:
+      - localstack-data:/tmp/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  google-drive-worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: google-drive-worker
+    depends_on:
+      - kafka
+      - localstack
+    environment:
+      # Kafka Configuration
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_CONSUMER_GROUP_ID: google-drive-worker
+      KAFKA_AUTO_OFFSET_RESET: earliest
+      KAFKA_ENABLE_AUTO_COMMIT: "false"
+      KAFKA_MAX_POLL_INTERVAL_MS: 300000
+      KAFKA_SESSION_TIMEOUT_MS: 30000
+
+      # Worker Configuration
+      WORKER_INTEGRATION_ID: google-drive
+      WORKER_MAX_CONCURRENT_CONNECTIONS: 5
+      WORKER_S3_PAYLOAD_THRESHOLD_BYTES: 262144
+      WORKER_IDEMPOTENCY_CACHE_SIZE: 1000
+      WORKER_IDEMPOTENCY_CACHE_TTL_SECONDS: 3600
+
+      # Google Drive API Configuration
+      GDRIVE_API_BASE_URL: https://www.googleapis.com/drive/v3
+      GDRIVE_PAGE_SIZE: 100
+      GDRIVE_INCLUDE_SHARED_DRIVES: "true"
+
+      # S3 Configuration (LocalStack)
+      S3_BUCKET_NAME: clustera-payloads
+      S3_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      S3_REGION: us-west-2
+
+      # Logging
+      LOG_LEVEL: DEBUG
+      LOG_FORMAT: json
+
+      # Control Plane (mock for local dev)
+      CONTROL_PLANE_BASE_URL: http://mock-control-plane:8080
+
+      # Google OAuth (use test credentials for local)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-test-client-id}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-test-client-secret}
+
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Mock Control Plane for local development
+  mock-control-plane:
+    image: mockserver/mockserver:latest
+    container_name: mock-control-plane
+    ports:
+      - "8080:1080"
+    environment:
+      MOCKSERVER_PROPERTY_FILE: /config/mockserver.properties
+      MOCKSERVER_INITIALIZATION_JSON_PATH: /config/expectations.json
+    volumes:
+      - ./deploy/mock/mockserver.properties:/config/mockserver.properties:ro
+      - ./deploy/mock/expectations.json:/config/expectations.json:ro
+
+  # Init container to create topics
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-init
+    depends_on:
+      - kafka
+    command: >
+      bash -c "
+        echo 'Waiting for Kafka to be ready...';
+        cub kafka-ready -b kafka:29092 1 30;
+
+        echo 'Creating topics...';
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic integration.trigger --partitions 3 --replication-factor 1;
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic webhook.raw --partitions 3 --replication-factor 1;
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic ingestion.data --partitions 6 --replication-factor 1;
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic integration.errors --partitions 3 --replication-factor 1;
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic integration.trigger.dlq --partitions 1 --replication-factor 1;
+
+        echo 'Topics created successfully';
+        kafka-topics --bootstrap-server kafka:29092 --list;
+      "
+
+  # S3 bucket initialization
+  s3-init:
+    image: amazon/aws-cli:latest
+    container_name: s3-init
+    depends_on:
+      - localstack
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-west-2
+    command: >
+      sh -c "
+        sleep 5;
+        aws --endpoint-url=http://localstack:4566 s3 mb s3://clustera-payloads;
+        aws --endpoint-url=http://localstack:4566 s3 ls;
+        echo 'S3 bucket created successfully';
+      "
+
+volumes:
+  zookeeper-data:
+  zookeeper-logs:
+  kafka-data:
+  localstack-data:
+
+networks:
+  default:
+    name: google-drive-worker-network

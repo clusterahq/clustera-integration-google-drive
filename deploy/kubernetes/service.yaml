@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: google-drive-worker
+  namespace: integrations
+  labels:
+    app: google-drive-worker
+    component: service
+spec:
+  type: ClusterIP
+  selector:
+    app: google-drive-worker
+  ports:
+  - name: metrics
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: google-drive-worker
+  namespace: integrations
+  labels:
+    app: google-drive-worker
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/google-drive-worker-role
