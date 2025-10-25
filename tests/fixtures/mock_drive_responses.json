@@ -1,0 +1,427 @@
+{
+  "google_doc": {
+    "id": "1A2B3C4D5E6F7G8H9I0",
+    "name": "Q4 Financial Report",
+    "mimeType": "application/vnd.google-apps.document",
+    "createdTime": "2025-01-15T10:00:00.000Z",
+    "modifiedTime": "2025-01-20T15:30:00.000Z",
+    "parents": ["0B1C2D3E4F5G6H7I8J9"],
+    "owners": [
+      {
+        "displayName": "Alice Johnson",
+        "emailAddress": "alice@example.com",
+        "photoLink": "https://lh3.googleusercontent.com/a/alice"
+      }
+    ],
+    "lastModifyingUser": {
+      "displayName": "Bob Smith",
+      "emailAddress": "bob@example.com",
+      "photoLink": "https://lh3.googleusercontent.com/a/bob"
+    },
+    "webViewLink": "https://docs.google.com/document/d/1A2B3C4D5E6F7G8H9I0/edit",
+    "thumbnailLink": "https://lh3.googleusercontent.com/thumbnail1",
+    "trashed": false,
+    "starred": true,
+    "shared": true,
+    "viewedByMe": true,
+    "viewedByMeTime": "2025-01-21T09:15:00.000Z",
+    "sharedWithMeTime": "2025-01-18T14:20:00.000Z",
+    "capabilities": {
+      "canEdit": true,
+      "canComment": true,
+      "canShare": true,
+      "canCopy": true,
+      "canDownload": true,
+      "canDelete": false,
+      "canRename": true,
+      "canMoveItemWithinDrive": true,
+      "canAddChildren": false
+    },
+    "version": "5",
+    "description": "Quarterly financial report for Q4 2024"
+  },
+  "google_sheet": {
+    "id": "2B3C4D5E6F7G8H9I0J1",
+    "name": "Budget Tracker 2025",
+    "mimeType": "application/vnd.google-apps.spreadsheet",
+    "createdTime": "2025-01-01T08:00:00.000Z",
+    "modifiedTime": "2025-01-22T11:45:00.000Z",
+    "parents": ["0B1C2D3E4F5G6H7I8J9"],
+    "owners": [
+      {
+        "displayName": "Finance Team",
+        "emailAddress": "finance@example.com"
+      }
+    ],
+    "webViewLink": "https://docs.google.com/spreadsheets/d/2B3C4D5E6F7G8H9I0J1/edit",
+    "webContentLink": "https://docs.google.com/spreadsheets/export?id=2B3C4D5E6F7G8H9I0J1",
+    "trashed": false,
+    "starred": false,
+    "shared": false,
+    "capabilities": {
+      "canEdit": true,
+      "canComment": true,
+      "canShare": true,
+      "canCopy": true,
+      "canDownload": true,
+      "canDelete": true,
+      "canRename": true,
+      "canMoveItemWithinDrive": true,
+      "canAddChildren": false
+    }
+  },
+  "google_slide": {
+    "id": "3C4D5E6F7G8H9I0J1K2",
+    "name": "Company Presentation",
+    "mimeType": "application/vnd.google-apps.presentation",
+    "createdTime": "2025-01-10T14:30:00.000Z",
+    "modifiedTime": "2025-01-19T16:20:00.000Z",
+    "parents": ["1C2D3E4F5G6H7I8J9K0"],
+    "owners": [
+      {
+        "displayName": "Marketing Team",
+        "emailAddress": "marketing@example.com",
+        "photoLink": "https://lh3.googleusercontent.com/a/marketing"
+      }
+    ],
+    "webViewLink": "https://docs.google.com/presentation/d/3C4D5E6F7G8H9I0J1K2/edit",
+    "thumbnailLink": "https://lh3.googleusercontent.com/thumbnail3",
+    "trashed": false,
+    "starred": true,
+    "shared": true,
+    "quotaBytesUsed": "0",
+    "capabilities": {
+      "canEdit": false,
+      "canComment": true,
+      "canShare": false,
+      "canCopy": true,
+      "canDownload": true,
+      "canDelete": false,
+      "canRename": false,
+      "canMoveItemWithinDrive": false,
+      "canAddChildren": false
+    }
+  },
+  "google_folder": {
+    "id": "4D5E6F7G8H9I0J1K2L3",
+    "name": "Project Documents",
+    "mimeType": "application/vnd.google-apps.folder",
+    "createdTime": "2024-12-01T09:00:00.000Z",
+    "modifiedTime": "2025-01-23T10:00:00.000Z",
+    "parents": ["root"],
+    "owners": [
+      {
+        "displayName": "Project Manager",
+        "emailAddress": "pm@example.com"
+      }
+    ],
+    "webViewLink": "https://drive.google.com/drive/folders/4D5E6F7G8H9I0J1K2L3",
+    "trashed": false,
+    "starred": false,
+    "shared": true,
+    "folderColorRgb": "#1e90ff",
+    "capabilities": {
+      "canEdit": true,
+      "canComment": false,
+      "canShare": true,
+      "canCopy": false,
+      "canDownload": true,
+      "canDelete": true,
+      "canRename": true,
+      "canMoveItemWithinDrive": true,
+      "canAddChildren": true
+    }
+  },
+  "pdf_file": {
+    "id": "5E6F7G8H9I0J1K2L3M4",
+    "name": "Contract_Agreement.pdf",
+    "mimeType": "application/pdf",
+    "createdTime": "2025-01-05T13:45:00.000Z",
+    "modifiedTime": "2025-01-05T13:45:00.000Z",
+    "size": "524288",
+    "parents": ["4D5E6F7G8H9I0J1K2L3"],
+    "owners": [
+      {
+        "displayName": "Legal Department",
+        "emailAddress": "legal@example.com"
+      }
+    ],
+    "webViewLink": "https://drive.google.com/file/d/5E6F7G8H9I0J1K2L3M4/view",
+    "webContentLink": "https://drive.google.com/uc?id=5E6F7G8H9I0J1K2L3M4&export=download",
+    "thumbnailLink": "https://lh3.googleusercontent.com/thumbnail5",
+    "trashed": false,
+    "starred": false,
+    "shared": false,
+    "md5Checksum": "d41d8cd98f00b204e9800998ecf8427e",
+    "sha1Checksum": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+    "sha256Checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "quotaBytesUsed": "524288",
+    "capabilities": {
+      "canEdit": false,
+      "canComment": true,
+      "canShare": true,
+      "canCopy": true,
+      "canDownload": true,
+      "canDelete": false,
+      "canRename": false,
+      "canMoveItemWithinDrive": false,
+      "canAddChildren": false
+    }
+  },
+  "image_file": {
+    "id": "6F7G8H9I0J1K2L3M4N5",
+    "name": "team_photo.jpg",
+    "mimeType": "image/jpeg",
+    "createdTime": "2025-01-12T16:30:00.000Z",
+    "modifiedTime": "2025-01-12T16:30:00.000Z",
+    "size": "2097152",
+    "parents": ["4D5E6F7G8H9I0J1K2L3"],
+    "owners": [
+      {
+        "displayName": "HR Department",
+        "emailAddress": "hr@example.com",
+        "photoLink": "https://lh3.googleusercontent.com/a/hr"
+      }
+    ],
+    "webViewLink": "https://drive.google.com/file/d/6F7G8H9I0J1K2L3M4N5/view",
+    "webContentLink": "https://drive.google.com/uc?id=6F7G8H9I0J1K2L3M4N5&export=download",
+    "thumbnailLink": "https://lh3.googleusercontent.com/thumbnail6",
+    "trashed": false,
+    "starred": true,
+    "shared": true,
+    "viewedByMe": true,
+    "viewedByMeTime": "2025-01-20T10:00:00.000Z",
+    "md5Checksum": "098f6bcd4621d373cade4e832627b4f6",
+    "quotaBytesUsed": "2097152",
+    "capabilities": {
+      "canEdit": true,
+      "canComment": true,
+      "canShare": true,
+      "canCopy": true,
+      "canDownload": true,
+      "canDelete": true,
+      "canRename": true,
+      "canMoveItemWithinDrive": true,
+      "canAddChildren": false
+    },
+    "imageMediaMetadata": {
+      "width": 4032,
+      "height": 3024,
+      "rotation": 0,
+      "time": "2025-01-12T16:29:45.000Z"
+    }
+  },
+  "file_without_parents": {
+    "id": "7G8H9I0J1K2L3M4N5O6",
+    "name": "orphan_file.txt",
+    "mimeType": "text/plain",
+    "createdTime": "2025-01-08T12:00:00.000Z",
+    "modifiedTime": "2025-01-08T12:00:00.000Z",
+    "size": "1024",
+    "owners": [
+      {
+        "displayName": "System User",
+        "emailAddress": "system@example.com"
+      }
+    ],
+    "webViewLink": "https://drive.google.com/file/d/7G8H9I0J1K2L3M4N5O6/view",
+    "webContentLink": "https://drive.google.com/uc?id=7G8H9I0J1K2L3M4N5O6&export=download",
+    "trashed": false,
+    "starred": false,
+    "shared": false,
+    "quotaBytesUsed": "1024",
+    "capabilities": {
+      "canEdit": true,
+      "canComment": true,
+      "canShare": true,
+      "canCopy": true,
+      "canDownload": true,
+      "canDelete": true,
+      "canRename": true,
+      "canMoveItemWithinDrive": true,
+      "canAddChildren": false
+    }
+  },
+  "minimal_file": {
+    "id": "8H9I0J1K2L3M4N5O6P7",
+    "name": "minimal.txt",
+    "mimeType": "text/plain"
+  },
+  "trashed_file": {
+    "id": "9I0J1K2L3M4N5O6P7Q8",
+    "name": "deleted_document.docx",
+    "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "createdTime": "2024-11-15T08:00:00.000Z",
+    "modifiedTime": "2024-12-20T14:30:00.000Z",
+    "trashedTime": "2025-01-10T10:00:00.000Z",
+    "size": "65536",
+    "parents": ["trash"],
+    "owners": [
+      {
+        "displayName": "Former Employee",
+        "emailAddress": "former@example.com"
+      }
+    ],
+    "trashed": true,
+    "explicitlyTrashed": true,
+    "starred": false,
+    "shared": false,
+    "quotaBytesUsed": "0",
+    "capabilities": {
+      "canEdit": false,
+      "canComment": false,
+      "canShare": false,
+      "canCopy": false,
+      "canDownload": true,
+      "canDelete": true,
+      "canRename": false,
+      "canMoveItemWithinDrive": false,
+      "canAddChildren": false
+    }
+  },
+  "video_file": {
+    "id": "0J1K2L3M4N5O6P7Q8R9",
+    "name": "company_intro.mp4",
+    "mimeType": "video/mp4",
+    "createdTime": "2025-01-18T11:00:00.000Z",
+    "modifiedTime": "2025-01-18T11:30:00.000Z",
+    "size": "52428800",
+    "parents": ["4D5E6F7G8H9I0J1K2L3"],
+    "owners": [
+      {
+        "displayName": "Media Team",
+        "emailAddress": "media@example.com"
+      }
+    ],
+    "webViewLink": "https://drive.google.com/file/d/0J1K2L3M4N5O6P7Q8R9/view",
+    "webContentLink": "https://drive.google.com/uc?id=0J1K2L3M4N5O6P7Q8R9&export=download",
+    "thumbnailLink": "https://lh3.googleusercontent.com/thumbnail10",
+    "trashed": false,
+    "starred": false,
+    "shared": true,
+    "md5Checksum": "5d41402abc4b2a76b9719d911017c592",
+    "quotaBytesUsed": "52428800",
+    "videoMediaMetadata": {
+      "width": 1920,
+      "height": 1080,
+      "durationMillis": "120000"
+    },
+    "capabilities": {
+      "canEdit": false,
+      "canComment": true,
+      "canShare": true,
+      "canCopy": true,
+      "canDownload": true,
+      "canDelete": false,
+      "canRename": false,
+      "canMoveItemWithinDrive": false,
+      "canAddChildren": false
+    }
+  },
+  "google_form": {
+    "id": "1K2L3M4N5O6P7Q8R9S0",
+    "name": "Employee Survey",
+    "mimeType": "application/vnd.google-apps.form",
+    "createdTime": "2025-01-02T09:00:00.000Z",
+    "modifiedTime": "2025-01-15T14:00:00.000Z",
+    "parents": ["4D5E6F7G8H9I0J1K2L3"],
+    "owners": [
+      {
+        "displayName": "HR Team",
+        "emailAddress": "hr@example.com"
+      }
+    ],
+    "webViewLink": "https://docs.google.com/forms/d/1K2L3M4N5O6P7Q8R9S0/edit",
+    "trashed": false,
+    "starred": false,
+    "shared": true,
+    "capabilities": {
+      "canEdit": true,
+      "canComment": false,
+      "canShare": true,
+      "canCopy": true,
+      "canDownload": false,
+      "canDelete": true,
+      "canRename": true,
+      "canMoveItemWithinDrive": true,
+      "canAddChildren": false
+    }
+  },
+  "revision_sample": {
+    "id": "1000",
+    "mimeType": "application/vnd.google-apps.document",
+    "modifiedTime": "2025-01-19T10:00:00.000Z",
+    "keepForever": true,
+    "published": false,
+    "publishAuto": false,
+    "publishedOutsideDomain": false,
+    "size": "12345",
+    "md5Checksum": "abc123def456",
+    "lastModifyingUser": {
+      "displayName": "Editor User",
+      "emailAddress": "editor@example.com",
+      "photoLink": "https://lh3.googleusercontent.com/a/editor"
+    },
+    "exportLinks": {
+      "application/pdf": "https://docs.google.com/export/pdf?id=xxx",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "https://docs.google.com/export/docx?id=xxx"
+    }
+  },
+  "permission_sample": {
+    "id": "anyoneWithLink",
+    "type": "anyone",
+    "role": "reader",
+    "allowFileDiscovery": false,
+    "displayName": "Anyone with the link",
+    "deleted": false,
+    "pendingOwner": false
+  },
+  "permission_user": {
+    "id": "12345678901234567890",
+    "type": "user",
+    "role": "writer",
+    "emailAddress": "collaborator@example.com",
+    "displayName": "Collaborator Name",
+    "photoLink": "https://lh3.googleusercontent.com/a/collaborator",
+    "deleted": false,
+    "pendingOwner": false,
+    "expirationTime": "2025-02-28T23:59:59.000Z"
+  },
+  "permission_domain": {
+    "id": "domain123",
+    "type": "domain",
+    "role": "commenter",
+    "domain": "example.com",
+    "displayName": "example.com",
+    "deleted": false,
+    "pendingOwner": false,
+    "allowFileDiscovery": true
+  },
+  "comment_sample": {
+    "id": "comment123",
+    "content": "This section needs review",
+    "resolved": false,
+    "deleted": false,
+    "author": {
+      "displayName": "Reviewer",
+      "emailAddress": "reviewer@example.com",
+      "photoLink": "https://lh3.googleusercontent.com/a/reviewer"
+    },
+    "createdTime": "2025-01-20T14:00:00.000Z",
+    "modifiedTime": "2025-01-20T14:00:00.000Z",
+    "replies": [
+      {
+        "id": "reply456",
+        "content": "I'll update this section",
+        "deleted": false,
+        "author": {
+          "displayName": "Author",
+          "emailAddress": "author@example.com",
+          "photoLink": "https://lh3.googleusercontent.com/a/author"
+        },
+        "createdTime": "2025-01-20T15:00:00.000Z",
+        "modifiedTime": "2025-01-20T15:00:00.000Z"
+      }
+    ]
+  }
+}
