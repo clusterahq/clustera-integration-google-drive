@@ -1,0 +1,3 @@
+[submodule "lib/clustera-integration_helper-toolkit"]
+	path = lib/clustera-integration_helper-toolkit
+	url = https://github.com/clusterahq/clustera-integration_helper-toolkit
