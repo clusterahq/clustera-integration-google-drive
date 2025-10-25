@@ -11,12 +11,21 @@ import asyncio
 import json
 import signal
 import sys
+import time
 from typing import Any, Dict, List, Optional, Set
 from datetime import datetime
 from contextlib import asynccontextmanager
 import structlog
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import KafkaError
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+)
+from clustera_toolkit.idempotency import IdempotencyCache
 
 from .config import Settings
 from .handlers.trigger import GoogleDriveTriggerHandler
@@ -50,6 +59,12 @@ class GoogleDriveWorker:
         self.consumer: Optional[AIOKafkaConsumer] = None
         self.producer: Optional[AIOKafkaProducer] = None
 
+        # Idempotency cache (in-memory LRU)
+        self.idempotency_cache = IdempotencyCache(
+            max_size=settings.worker.idempotency_cache_size,
+            ttl_seconds=settings.worker.idempotency_cache_ttl_seconds,
+        )
+
         # Handlers
         self.trigger_handler = GoogleDriveTriggerHandler(
             api_config=settings.google_drive,
@@ -66,12 +81,22 @@ class GoogleDriveWorker:
             settings.worker.max_concurrent_connections
         )
 
-        # Metrics
+        # Enhanced metrics
         self.metrics = {
+            # Counters
             "messages_processed": 0,
             "messages_failed": 0,
             "records_produced": 0,
             "errors_produced": 0,
+            "errors_retriable": 0,
+            "errors_terminal": 0,
+            "duplicates_skipped": 0,
+            "payloads_offloaded_to_s3": 0,
+
+            # Gauges
+            "processing_time_seconds": 0.0,
+            "api_calls_total": 0,
+            "cache_hit_rate": 0.0,
         }
 
     def _setup_logger(self) -> structlog.BoundLogger:
@@ -279,6 +304,35 @@ class GoogleDriveWorker:
             finally:
                 self.active_connections.discard(connection_id)
 
+    @retry(
+        retry=retry_if_exception_type(RetriableError),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2.0, max=60.0),
+        before_sleep=before_sleep_log(structlog.get_logger(), structlog.INFO),
+    )
+    async def _process_with_retry(
+        self,
+        handler: Any,
+        message: Dict[str, Any],
+        connection_config: Dict[str, Any],
+    ) -> int:
+        """Process message with automatic retries for retriable errors.
+
+        Args:
+            handler: Handler instance
+            message: Message to process
+            connection_config: Connection configuration
+
+        Returns:
+            Number of records produced
+        """
+        record_count = 0
+        async for record in handler.process_message(message, connection_config):
+            await self._produce_record(record)
+            record_count += 1
+            self.metrics["records_produced"] += 1
+        return record_count
+
     async def _handle_message(
         self,
         topic: str,
@@ -296,6 +350,7 @@ class GoogleDriveWorker:
             headers: Message headers
             connection_id: Integration connection ID
         """
+        start_time = time.time()
         self.logger.info(
             "Handling message",
             topic=topic,
@@ -324,71 +379,97 @@ class GoogleDriveWorker:
             # Fetch connection configuration
             connection_config = await handler.fetch_connection_config(connection_id)
 
-            # Process message and produce records
-            record_count = 0
-            async for record in handler.process_message(value, connection_config):
-                await self._produce_record(record)
-                record_count += 1
-                self.metrics["records_produced"] += 1
+            # Process with retries
+            record_count = await self._process_with_retry(
+                handler, value, connection_config
+            )
+
+            # Track processing time
+            duration = time.time() - start_time
+            self.metrics["processing_time_seconds"] += duration
 
             self.logger.info(
                 "Message processed successfully",
                 connection_id=connection_id,
                 record_count=record_count,
+                processing_time_seconds=duration,
             )
 
             # Commit offset after successful processing
             await self.consumer.commit()
 
         except RetriableError as e:
-            # Retriable error - log and potentially retry
+            # Retriable error after all retries exhausted
             self.logger.warning(
-                "Retriable error occurred",
+                "Retriable error occurred, will retry on next poll",
                 error=str(e),
                 connection_id=connection_id,
                 retry_after=getattr(e, "retry_after", None),
             )
-            # Don't commit - message will be retried
-            await self._produce_error(e, value, connection_id)
+            # Don't commit - message will be retried on next poll
+            await self._produce_error(e, value, connection_id, retriable=True)
+            self.metrics["errors_retriable"] += 1
 
         except TerminalError as e:
             # Terminal error - send to DLQ and commit
             self.logger.error(
-                "Terminal error occurred",
+                "Terminal error occurred, moving to DLQ",
                 error=str(e),
                 connection_id=connection_id,
             )
-            await self._produce_error(e, value, connection_id)
+            await self._produce_error(e, value, connection_id, retriable=False)
             await self.consumer.commit()  # Skip this message
+            self.metrics["errors_terminal"] += 1
 
         except Exception as e:
-            # Unexpected error - treat as retriable
-            self.logger.error(
-                "Unexpected error occurred",
+            # Unexpected error - treat as terminal
+            self.logger.exception(
+                "Unexpected error occurred, moving to DLQ",
                 error=str(e),
                 connection_id=connection_id,
-                exc_info=True,
             )
-            await self._produce_error(e, value, connection_id)
+            await self._produce_error(e, value, connection_id, retriable=False)
+            await self.consumer.commit()  # Skip this message
+            self.metrics["errors_terminal"] += 1
+
+        finally:
+            # Track processing time even on failure
+            if start_time:
+                duration = time.time() - start_time
+                self.metrics["processing_time_seconds"] += duration
 
     async def _produce_record(self, record: Dict[str, Any]) -> None:
-        """Produce a record to ingestion.data topic.
+        """Produce a record to ingestion.data topic with idempotency check.
 
         Args:
             record: Normalized record to produce
         """
+        idempotency_key = record.get("idempotency_key")
+
+        # Check idempotency cache
+        if self.idempotency_cache.has(idempotency_key):
+            self.logger.debug(
+                "Skipping duplicate record",
+                idempotency_key=idempotency_key,
+                resource_type=record.get("resource_type"),
+                resource_id=record.get("resource_id"),
+            )
+            self.metrics["duplicates_skipped"] += 1
+            return
+
         topic = "ingestion.data"
         key = record["integration_connection_id"]
 
         # Check payload size for S3 offloading
         payload_size = len(json.dumps(record).encode("utf-8"))
         if payload_size > self.settings.worker.s3_payload_threshold_bytes:
-            # TODO: Implement S3 offloading
+            # TODO: Implement S3 offloading in next step
             self.logger.warning(
                 "Payload exceeds threshold, would offload to S3",
                 size=payload_size,
                 threshold=self.settings.worker.s3_payload_threshold_bytes,
             )
+            self.metrics["payloads_offloaded_to_s3"] += 1
 
         # Add headers
         headers = [
@@ -403,6 +484,9 @@ class GoogleDriveWorker:
             value=record,
             headers=headers,
         )
+
+        # Add to idempotency cache after successful production
+        self.idempotency_cache.add(idempotency_key)
 
         # Extract headers for logging
         headers_dict = {}
@@ -419,7 +503,7 @@ class GoogleDriveWorker:
             record_type="data",
             resource_type=record.get("resource_type"),
             resource_id=record.get("resource_id"),
-            idempotency_key=record.get("idempotency_key"),
+            idempotency_key=idempotency_key,
             message_id=record.get("message_id"),
             headers=headers_dict
         )
@@ -429,15 +513,22 @@ class GoogleDriveWorker:
         error: Exception,
         original_message: Dict[str, Any],
         connection_id: str,
+        retriable: Optional[bool] = None,
     ) -> None:
-        """Produce error to integration.errors topic.
+        """Produce error to integration.errors topic or DLQ.
 
         Args:
             error: The error that occurred
             original_message: Original message being processed
             connection_id: Connection ID
+            retriable: Whether error is retriable (None = auto-detect)
         """
-        topic = "integration.errors"
+        # Determine if retriable if not specified
+        if retriable is None:
+            retriable = isinstance(error, RetriableError)
+
+        # Use DLQ for terminal errors, regular errors for retriable
+        topic = "integration.errors" if retriable else "integration.errors.dlq"
 
         error_record = {
             "message_id": original_message.get("message_id", "unknown"),
@@ -447,7 +538,7 @@ class GoogleDriveWorker:
             "error": {
                 "type": type(error).__name__,
                 "message": str(error),
-                "retriable": isinstance(error, RetriableError),
+                "retriable": retriable,
             },
             "original_message": original_message,
             "occurred_at": datetime.utcnow().isoformat() + "Z",
@@ -469,7 +560,7 @@ class GoogleDriveWorker:
             record_type="error",
             error_type=type(error).__name__,
             message_id=error_record.get("message_id"),
-            retriable=isinstance(error, RetriableError)
+            retriable=retriable
         )
 
         self.metrics["errors_produced"] += 1

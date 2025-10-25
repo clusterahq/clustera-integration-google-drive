@@ -8,9 +8,14 @@ all integration workers.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, AsyncIterator
 from datetime import datetime
+import hashlib
+import json
+import uuid
 import structlog
+from clustera_toolkit.storage import S3Client
 
 from ..utils.errors import IntegrationError
+from ..config import settings
 
 
 class BaseIntegrationHandler(ABC):
@@ -37,6 +42,13 @@ class BaseIntegrationHandler(ABC):
         """
         self.integration_id = integration_id
         self.logger = logger or structlog.get_logger()
+
+        # Initialize S3 client for payload offloading
+        self.s3_client = S3Client(
+            bucket_name=settings.s3.bucket_name,
+            endpoint_url=settings.s3.endpoint_url,
+            region=settings.s3.region,
+        )
 
     @abstractmethod
     async def can_handle(self, message: Dict[str, Any]) -> bool:
@@ -131,7 +143,7 @@ class BaseIntegrationHandler(ABC):
             },
         }
 
-    def create_ingestion_envelope(
+    async def create_ingestion_envelope(
         self,
         message_id: str,
         customer_id: str,
@@ -141,7 +153,7 @@ class BaseIntegrationHandler(ABC):
         data: Dict[str, Any],
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Create an ingestion data envelope.
+        """Create an ingestion data envelope with S3 offloading for large payloads.
 
         This follows the schema defined in docs/04-message-schemas.md
 
@@ -173,7 +185,8 @@ class BaseIntegrationHandler(ABC):
         if metadata:
             default_metadata.update(metadata)
 
-        return {
+        # Create base envelope
+        envelope = {
             "message_id": message_id,
             "customer_id": customer_id,
             "integration_id": self.integration_id,
@@ -181,11 +194,55 @@ class BaseIntegrationHandler(ABC):
             "provider": self.integration_id,
             "resource_type": resource_type,
             "resource_id": resource_id,
-            "data": data,
-            "metadata": default_metadata,
             "created_at": now,
             "idempotency_key": idempotency_key,
+            "metadata": default_metadata,
         }
+
+        # Check payload size for S3 offloading
+        data_bytes = json.dumps(data).encode("utf-8")
+        data_size = len(data_bytes)
+
+        # Check size threshold (256 KB)
+        if data_size > settings.worker.s3_payload_threshold_bytes:
+            self.logger.info(
+                "Payload exceeds threshold, offloading to S3",
+                size_bytes=data_size,
+                threshold_bytes=settings.worker.s3_payload_threshold_bytes,
+                resource_type=resource_type,
+                resource_id=resource_id,
+            )
+
+            # Calculate checksum
+            checksum = hashlib.sha256(data_bytes).hexdigest()
+
+            # Upload to S3
+            s3_key = f"payloads/{customer_id}/{connection_id}/{message_id}.json"
+            s3_url = await self.s3_client.upload(
+                key=s3_key,
+                data=data_bytes,
+                content_type="application/json",
+                metadata={
+                    "customer_id": customer_id,
+                    "connection_id": connection_id,
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "sha256": checksum,
+                },
+            )
+
+            # Set envelope with S3 reference
+            envelope["data"] = None
+            envelope["s3_url"] = s3_url
+            envelope["metadata"]["payload_size_bytes"] = data_size
+            envelope["metadata"]["sha256"] = checksum
+
+        else:
+            # Inline payload
+            envelope["data"] = data
+            envelope["s3_url"] = None
+
+        return envelope
 
     async def handle_error(
         self,

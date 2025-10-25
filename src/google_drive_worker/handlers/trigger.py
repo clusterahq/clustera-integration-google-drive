@@ -173,7 +173,7 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
                     # Create normalized envelope
                     resource_type = "folder" if is_folder else "file"
 
-                    yield self.create_ingestion_envelope(
+                    yield await self.create_ingestion_envelope(
                         message_id=str(uuid.uuid4()),
                         customer_id=customer_id,
                         connection_id=connection_id,
@@ -308,7 +308,7 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
                     # Create normalized envelope
                     resource_type = "folder" if is_folder else "file"
 
-                    yield self.create_ingestion_envelope(
+                    yield await self.create_ingestion_envelope(
                         message_id=str(uuid.uuid4()),
                         customer_id=customer_id,
                         connection_id=connection_id,
