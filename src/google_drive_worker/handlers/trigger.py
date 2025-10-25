@@ -10,8 +10,9 @@ from datetime import datetime
 import structlog
 
 from .base import BaseIntegrationHandler
+from ..client.drive_api import GoogleDriveAPIClient
 from ..config import GoogleDriveAPIConfig
-from ..utils.errors import ValidationError, RetriableError
+from ..utils.errors import ValidationError, RetriableError, TerminalError
 
 
 class GoogleDriveTriggerHandler(BaseIntegrationHandler):
@@ -72,83 +73,164 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
             "Processing Google Drive trigger",
             trigger_type=trigger_type,
             connection_id=connection_id,
+            customer_id=customer_id,
         )
 
-        # TODO: In Phase 3, implement actual API calls
-        # For now, yield placeholder data
-        if trigger_type == "full_sync":
-            async for record in self._process_full_sync(
-                connection_id, customer_id, connection_config
-            ):
-                yield record
-        elif trigger_type in ["incremental", "poll"]:
-            async for record in self._process_incremental(
-                connection_id, customer_id, message, connection_config
-            ):
-                yield record
-        else:
-            raise ValidationError(f"Unknown trigger type: {trigger_type}")
+        # Initialize API client
+        api_client = GoogleDriveAPIClient(
+            access_token=connection_config.get("access_token"),
+            refresh_token=connection_config.get("refresh_token"),
+            client_id=connection_config.get("client_id"),
+            client_secret=connection_config.get("client_secret"),
+        )
+
+        try:
+            if trigger_type == "full_sync":
+                async for record in self._process_full_sync(
+                    api_client, connection_id, customer_id, connection_config, message
+                ):
+                    yield record
+            elif trigger_type in ["incremental", "poll"]:
+                async for record in self._process_incremental(
+                    api_client, connection_id, customer_id, connection_config, message
+                ):
+                    yield record
+            else:
+                raise ValidationError(f"Unknown trigger type: {trigger_type}")
+        finally:
+            await api_client.close()
 
     async def _process_full_sync(
         self,
+        api_client: GoogleDriveAPIClient,
         connection_id: str,
         customer_id: str,
         connection_config: Dict[str, Any],
+        message: Dict[str, Any],
     ) -> AsyncIterator[Dict[str, Any]]:
         """Process a full sync trigger.
 
         Args:
+            api_client: Google Drive API client
             connection_id: Integration connection ID
             customer_id: Customer ID
             connection_config: Connection configuration
+            message: Original trigger message
 
         Yields:
             All files/folders in the drive
         """
         self.logger.info(
-            "[PLACEHOLDER] Processing full sync",
+            "Processing full sync",
             connection_id=connection_id,
+            customer_id=customer_id,
         )
 
-        # TODO: Implement actual Google Drive API calls
-        # Placeholder: yield sample file
-        sample_file = {
-            "id": "file_123",
-            "name": "Sample Document.docx",
-            "mimeType": "application/vnd.google-apps.document",
-            "createdTime": "2025-01-01T10:00:00Z",
-            "modifiedTime": "2025-01-15T15:30:00Z",
-            "size": "12345",
-            "webViewLink": "https://drive.google.com/file/d/file_123",
-        }
+        # Get sync settings from connection config
+        settings = connection_config.get("settings", {})
+        sync_files = settings.get("sync_files", True)
+        sync_folders = settings.get("sync_folders", True)
+        sync_shared_drives = settings.get("sync_shared_drives", True)
 
-        yield self.create_ingestion_envelope(
-            message_id=str(uuid.uuid4()),
-            customer_id=customer_id,
+        # Build query based on settings
+        query_parts = []
+        if not sync_files:
+            query_parts.append("mimeType = 'application/vnd.google-apps.folder'")
+        elif not sync_folders:
+            query_parts.append("mimeType != 'application/vnd.google-apps.folder'")
+
+        query = " and ".join(query_parts) if query_parts else None
+
+        # Track progress
+        total_files = 0
+        page_token = None
+
+        while True:
+            try:
+                # List files with pagination
+                response = await api_client.list_files(
+                    page_size=100,
+                    page_token=page_token,
+                    query=query,
+                    include_shared_drives=sync_shared_drives,
+                    include_trashed=False,
+                )
+
+                files = response.get("files", [])
+                page_token = response.get("nextPageToken")
+
+                # Process each file
+                for file_data in files:
+                    total_files += 1
+
+                    # Skip if file type not wanted
+                    is_folder = file_data.get("mimeType") == "application/vnd.google-apps.folder"
+                    if is_folder and not sync_folders:
+                        continue
+                    if not is_folder and not sync_files:
+                        continue
+
+                    # Create normalized envelope
+                    resource_type = "folder" if is_folder else "file"
+
+                    yield self.create_ingestion_envelope(
+                        message_id=str(uuid.uuid4()),
+                        customer_id=customer_id,
+                        connection_id=connection_id,
+                        resource_type=resource_type,
+                        resource_id=file_data["id"],
+                        data=self._normalize_file(file_data),
+                        metadata={
+                            "trigger_type": "full_sync",
+                            "source_format": "google_drive_api_v3",
+                            "transformation_version": "1.0.0",
+                        },
+                    )
+
+                # Log progress
+                if total_files % 100 == 0:
+                    self.logger.info(
+                        "Full sync progress",
+                        connection_id=connection_id,
+                        files_processed=total_files,
+                        has_more=bool(page_token),
+                    )
+
+                # Check if more pages
+                if not page_token:
+                    break
+
+            except Exception as e:
+                self.logger.error(
+                    "Error during full sync",
+                    connection_id=connection_id,
+                    error=str(e),
+                    files_processed=total_files,
+                )
+                raise
+
+        self.logger.info(
+            "Full sync completed",
             connection_id=connection_id,
-            resource_type="file",
-            resource_id=sample_file["id"],
-            data=self._normalize_file(sample_file),
-            metadata={
-                "trigger_type": "full_sync",
-                "source": "google-drive-api",
-            },
+            total_files_processed=total_files,
         )
 
     async def _process_incremental(
         self,
+        api_client: GoogleDriveAPIClient,
         connection_id: str,
         customer_id: str,
-        message: Dict[str, Any],
         connection_config: Dict[str, Any],
+        message: Dict[str, Any],
     ) -> AsyncIterator[Dict[str, Any]]:
         """Process an incremental sync trigger.
 
         Args:
+            api_client: Google Drive API client
             connection_id: Integration connection ID
             customer_id: Customer ID
-            message: The trigger message
             connection_config: Connection configuration
+            message: The trigger message
 
         Yields:
             Changed files/folders since last sync
@@ -157,32 +239,122 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
         page_token = last_cursor.get("page_token")
 
         self.logger.info(
-            "[PLACEHOLDER] Processing incremental sync",
+            "Processing incremental sync",
             connection_id=connection_id,
-            page_token=page_token,
+            has_page_token=bool(page_token),
         )
 
-        # TODO: Implement actual Changes API calls
-        # Placeholder: yield sample changed file
-        changed_file = {
-            "id": "file_456",
-            "name": "Updated Spreadsheet.xlsx",
-            "mimeType": "application/vnd.google-apps.spreadsheet",
-            "modifiedTime": datetime.utcnow().isoformat() + "Z",
-        }
+        # Get sync settings
+        settings = connection_config.get("settings", {})
+        sync_files = settings.get("sync_files", True)
+        sync_folders = settings.get("sync_folders", True)
+        sync_shared_drives = settings.get("sync_shared_drives", True)
 
-        yield self.create_ingestion_envelope(
-            message_id=str(uuid.uuid4()),
-            customer_id=customer_id,
-            connection_id=connection_id,
-            resource_type="file",
-            resource_id=changed_file["id"],
-            data=self._normalize_file(changed_file),
-            metadata={
-                "trigger_type": "incremental",
-                "page_token": page_token,
-            },
-        )
+        # If no page token, get start token
+        if not page_token:
+            self.logger.info(
+                "No page token found, fetching start page token",
+                connection_id=connection_id,
+            )
+            page_token = await api_client.get_start_page_token(
+                supports_all_drives=sync_shared_drives
+            )
+            self.logger.info(
+                "Retrieved start page token",
+                connection_id=connection_id,
+                page_token=page_token[:20] + "..." if len(page_token) > 20 else page_token,
+            )
+
+        # Track progress
+        total_changes = 0
+        new_start_page_token = None
+
+        while page_token:
+            try:
+                # List changes
+                response = await api_client.list_changes(
+                    page_token=page_token,
+                    page_size=100,
+                    include_shared_drives=sync_shared_drives,
+                )
+
+                changes = response.get("changes", [])
+                page_token = response.get("nextPageToken")
+                new_start_page_token = response.get("newStartPageToken")
+
+                # Process each change
+                for change in changes:
+                    total_changes += 1
+
+                    # Skip removed files
+                    if change.get("removed"):
+                        self.logger.debug(
+                            "Skipping removed file",
+                            file_id=change.get("file", {}).get("id"),
+                        )
+                        continue
+
+                    file_data = change.get("file")
+                    if not file_data:
+                        continue
+
+                    # Check if file type is wanted
+                    is_folder = file_data.get("mimeType") == "application/vnd.google-apps.folder"
+                    if is_folder and not sync_folders:
+                        continue
+                    if not is_folder and not sync_files:
+                        continue
+
+                    # Create normalized envelope
+                    resource_type = "folder" if is_folder else "file"
+
+                    yield self.create_ingestion_envelope(
+                        message_id=str(uuid.uuid4()),
+                        customer_id=customer_id,
+                        connection_id=connection_id,
+                        resource_type=resource_type,
+                        resource_id=file_data["id"],
+                        data=self._normalize_file(file_data),
+                        metadata={
+                            "trigger_type": "incremental",
+                            "change_type": change.get("changeType", "file"),
+                            "source_format": "google_drive_api_v3",
+                            "transformation_version": "1.0.0",
+                        },
+                    )
+
+                # Log progress
+                if total_changes % 100 == 0:
+                    self.logger.info(
+                        "Incremental sync progress",
+                        connection_id=connection_id,
+                        changes_processed=total_changes,
+                        has_more=bool(page_token),
+                    )
+
+            except Exception as e:
+                self.logger.error(
+                    "Error during incremental sync",
+                    connection_id=connection_id,
+                    error=str(e),
+                    changes_processed=total_changes,
+                )
+                raise
+
+        # Log the new start page token for next incremental sync
+        if new_start_page_token:
+            self.logger.info(
+                "Incremental sync completed - save this token for next sync",
+                connection_id=connection_id,
+                new_start_page_token=new_start_page_token[:20] + "..." if len(new_start_page_token) > 20 else new_start_page_token,
+                total_changes_processed=total_changes,
+            )
+        else:
+            self.logger.info(
+                "Incremental sync completed",
+                connection_id=connection_id,
+                total_changes_processed=total_changes,
+            )
 
     def _normalize_file(self, raw_file: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize Google Drive file to standard format.
@@ -193,17 +365,39 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
         Returns:
             Normalized file data
         """
-        # TODO: Implement full normalization in Phase 4
-        return {
+        # Basic normalization - full transformation will be done in Phase 4
+        normalized = {
             "id": raw_file.get("id"),
-            "type": "file",
             "name": raw_file.get("name"),
             "mime_type": raw_file.get("mimeType"),
             "created_at": raw_file.get("createdTime"),
             "modified_at": raw_file.get("modifiedTime"),
             "size_bytes": int(raw_file.get("size", 0)) if raw_file.get("size") else None,
             "web_view_link": raw_file.get("webViewLink"),
+            "parents": raw_file.get("parents", []),
+            "trashed": raw_file.get("trashed", False),
         }
+
+        # Determine type
+        if raw_file.get("mimeType") == "application/vnd.google-apps.folder":
+            normalized["type"] = "folder"
+        else:
+            normalized["type"] = "file"
+
+        # Add owner info if present
+        owners = raw_file.get("owners", [])
+        if owners:
+            normalized["owner"] = {
+                "email": owners[0].get("emailAddress"),
+                "name": owners[0].get("displayName"),
+            }
+
+        # Add permissions count if present
+        permissions = raw_file.get("permissions", [])
+        if permissions:
+            normalized["permissions_count"] = len(permissions)
+
+        return normalized
 
     def generate_idempotency_key(
         self,
@@ -240,6 +434,18 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
             "trigger_type",
         ]
 
+        missing_fields = []
         for field in required_fields:
-            if field not in message:
-                raise ValidationError(f"Missing required field: {field}")
+            if field not in message or message[field] is None:
+                missing_fields.append(field)
+
+        if missing_fields:
+            raise ValidationError(f"Missing required fields: {', '.join(missing_fields)}")
+
+        # Validate trigger type
+        valid_trigger_types = ["full_sync", "incremental", "poll"]
+        if message["trigger_type"] not in valid_trigger_types:
+            raise ValidationError(
+                f"Invalid trigger_type: {message['trigger_type']}. "
+                f"Must be one of: {', '.join(valid_trigger_types)}"
+            )

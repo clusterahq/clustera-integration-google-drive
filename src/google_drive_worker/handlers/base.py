@@ -164,6 +164,15 @@ class BaseIntegrationHandler(ABC):
             resource_id,
         )
 
+        # Add default metadata fields
+        default_metadata = {
+            "source_format": f"{self.integration_id}_api",
+            "transformation_version": "1.0.0",
+        }
+
+        if metadata:
+            default_metadata.update(metadata)
+
         return {
             "message_id": message_id,
             "customer_id": customer_id,
@@ -173,7 +182,7 @@ class BaseIntegrationHandler(ABC):
             "resource_type": resource_type,
             "resource_id": resource_id,
             "data": data,
-            "metadata": metadata or {},
+            "metadata": default_metadata,
             "created_at": now,
             "idempotency_key": idempotency_key,
         }

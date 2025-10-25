@@ -79,6 +79,10 @@ class GoogleDriveAPIClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit - close HTTP client."""
+        await self.close()
+
+    async def close(self):
+        """Close the HTTP client and clean up resources."""
         if self._http_client:
             await self._http_client.aclose()
 
