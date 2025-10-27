@@ -1,0 +1,64 @@
+[
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/api/v1/connections/.*"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": {
+        "connection_id": "conn_test_google_drive",
+        "customer_id": "cust_test_123",
+        "integration_id": "google-drive",
+        "status": "active",
+        "credentials": {
+          "access_token": "test-access-token",
+          "refresh_token": "test-refresh-token",
+          "token_expiry": "2025-12-31T23:59:59Z"
+        },
+        "settings": {
+          "sync_frequency": "15m",
+          "file_types": ["document", "spreadsheet", "presentation"],
+          "max_file_size_mb": 100
+        }
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/api/v1/connections/.*/refresh-token"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": {
+        "access_token": "refreshed-access-token",
+        "expires_in": 3600,
+        "token_type": "Bearer"
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/health"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": {
+        "status": "healthy",
+        "service": "mock-control-plane",
+        "timestamp": "2025-10-27T00:00:00Z"
+      }
+    }
+  }
+]
