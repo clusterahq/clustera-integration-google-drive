@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reliability**: At-least-once delivery guarantee
 - **Scalability**: Horizontal scaling support
 - **Monitoring**: Prometheus metrics
-- **Security**: mTLS support for Control Plane
+- **Security**: M2M token authentication for Control Plane
 
 ### Technical Details
 - Python 3.11+ support

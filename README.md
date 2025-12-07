@@ -16,7 +16,7 @@ The Google Drive Integration Worker is a high-performance, Kafka-native service 
 - 🔄 **Real-time Sync**: Webhook support for instant change notifications
 - 📊 **Comprehensive Data**: Files, folders, permissions, revisions, and sharing metadata
 - 🚀 **High Performance**: Concurrent processing with intelligent rate limiting
-- 🔐 **Enterprise Security**: OAuth 2.0, mTLS, and secure credential management
+- 🔐 **Enterprise Security**: OAuth 2.0, M2M token authentication, and secure credential management
 - 📈 **Production Ready**: Horizontal scaling, health checks, and Prometheus metrics
 - 🎯 **Idempotent**: Deterministic key generation prevents duplicate processing
 
@@ -397,7 +397,7 @@ spec:
 
 ### Security Best Practices
 
-- ✅ Use mTLS for Control Plane communication
+- ✅ Use M2M token authentication for Control Plane communication
 - ✅ Store credentials in secret management (Vault, AWS Secrets Manager)
 - ✅ Enable audit logging for all API access
 - ✅ Implement network policies in Kubernetes

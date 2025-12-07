@@ -196,7 +196,7 @@ class S3Config(BaseSettings):
 
 
 class ControlPlaneConfig(BaseSettings):
-    """Control Plane configuration for secrets and config fetching."""
+    """Control Plane configuration for secrets and config fetching with M2M token authentication."""
 
     model_config = SettingsConfigDict(env_prefix="CONTROL_PLANE_")
 
@@ -204,17 +204,9 @@ class ControlPlaneConfig(BaseSettings):
         default="https://control-plane.clustera.io",
         description="Control Plane base URL",
     )
-    mtls_cert_path: Optional[str] = Field(
+    m2m_token: Optional[str] = Field(
         default=None,
-        description="Path to mTLS client certificate",
-    )
-    mtls_key_path: Optional[str] = Field(
-        default=None,
-        description="Path to mTLS client key",
-    )
-    mtls_ca_path: Optional[str] = Field(
-        default=None,
-        description="Path to mTLS CA certificate",
+        description="M2M bearer token for authentication (format: m2m_live_* or m2m_test_*)",
     )
     timeout_seconds: int = Field(
         default=10,

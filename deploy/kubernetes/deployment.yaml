@@ -115,18 +115,14 @@ spec:
               name: google-drive-worker-secrets
               key: aws_secret_access_key
 
-        # mTLS Certificates
-        - name: TLS_CERT_PATH
-          value: "/etc/certs/tls.crt"
-        - name: TLS_KEY_PATH
-          value: "/etc/certs/tls.key"
-        - name: TLS_CA_PATH
-          value: "/etc/certs/ca.crt"
+        # M2M Token Authentication
+        - name: CONTROL_PLANE_M2M_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: google-drive-worker-secrets
+              key: control_plane_m2m_token
 
         volumeMounts:
-        - name: certs
-          mountPath: /etc/certs
-          readOnly: true
         - name: tmp
           mountPath: /tmp
 
@@ -172,10 +168,6 @@ spec:
           failureThreshold: 12
 
       volumes:
-      - name: certs
-        secret:
-          secretName: control-plane-mtls-certs
-          defaultMode: 0400
       - name: tmp
         emptyDir: {}
 
