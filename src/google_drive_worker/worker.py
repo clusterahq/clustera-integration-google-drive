@@ -16,8 +16,6 @@ from typing import Any, Dict, List, Optional, Set
 from datetime import datetime
 from contextlib import asynccontextmanager
 import structlog
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
-from aiokafka.errors import KafkaError
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -25,7 +23,13 @@ from tenacity import (
     retry_if_exception_type,
     before_sleep_log,
 )
-from clustera_toolkit.idempotency import IdempotencyCache
+from clustera_integration_toolkit.idempotency import IdempotencyCache
+from clustera_integration_toolkit.kafka import (
+    KafkaProducer,
+    KafkaConsumer,
+    KafkaConfig,
+    KafkaMessage,
+)
 
 from .config import Settings
 from .handlers.trigger import GoogleDriveTriggerHandler
@@ -56,8 +60,8 @@ class GoogleDriveWorker:
         self.shutdown_event = asyncio.Event()
 
         # Kafka clients (initialized in start)
-        self.consumer: Optional[AIOKafkaConsumer] = None
-        self.producer: Optional[AIOKafkaProducer] = None
+        self.consumer: Optional[KafkaConsumer] = None
+        self.producer: Optional[KafkaProducer] = None
 
         # Idempotency cache (in-memory LRU)
         self.idempotency_cache = IdempotencyCache(
@@ -155,14 +159,6 @@ class GoogleDriveWorker:
             await self.producer.start()
             self.logger.info("Kafka producer started")
 
-            # Subscribe to topics
-            topics = [
-                "integration.trigger",  # Polling triggers from Control Plane
-                "webhook.raw",  # Push notifications from Google Drive
-            ]
-            self.consumer.subscribe(topics)
-            self.logger.info("Subscribed to topics", topics=topics)
-
             # Main processing loop
             await self._process_messages()
 
@@ -200,28 +196,31 @@ class GoogleDriveWorker:
         )
 
     async def _init_kafka_clients(self) -> None:
-        """Initialize Kafka consumer and producer."""
-        # Consumer configuration
-        self.consumer = AIOKafkaConsumer(
+        """Initialize Kafka consumer and producer using toolkit."""
+        # Build toolkit KafkaConfig from settings
+        kafka_config = KafkaConfig(
             bootstrap_servers=self.settings.kafka.bootstrap_servers,
-            group_id=self.settings.kafka.consumer_group_id,
+            consumer_group_id=self.settings.kafka.consumer_group_id,
             auto_offset_reset=self.settings.kafka.auto_offset_reset,
-            enable_auto_commit=False,  # Manual commits only
-            max_poll_records=self.settings.kafka.max_poll_records,
-            session_timeout_ms=self.settings.kafka.session_timeout_ms,
-            heartbeat_interval_ms=self.settings.kafka.heartbeat_interval_ms,
-            value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-            key_deserializer=lambda k: k.decode("utf-8") if k else None,
         )
 
-        # Producer configuration
-        self.producer = AIOKafkaProducer(
-            bootstrap_servers=self.settings.kafka.bootstrap_servers,
-            compression_type=self.settings.kafka.producer_compression_type,
-            acks=self.settings.kafka.producer_acks,
-            enable_idempotence=self.settings.kafka.producer_enable_idempotence,
-            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-            key_serializer=lambda k: k.encode("utf-8") if k else None,
+        # Topics to subscribe to
+        topics = [
+            "integration.trigger",  # Polling triggers from Control Plane
+            "webhook.raw",  # Push notifications from Google Drive
+        ]
+
+        # Initialize consumer
+        self.consumer = KafkaConsumer(
+            config=kafka_config,
+            topics=topics,
+            client_id=f"{self.settings.service_name}-consumer",
+        )
+
+        # Initialize producer
+        self.producer = KafkaProducer(
+            config=kafka_config,
+            client_id=f"{self.settings.service_name}-producer",
         )
 
     async def _process_messages(self) -> None:
@@ -230,16 +229,18 @@ class GoogleDriveWorker:
 
         while self.running:
             try:
-                # Fetch messages with timeout
-                messages = await self.consumer.getmany(timeout_ms=1000)
+                # Fetch messages with timeout (toolkit returns List[KafkaMessage])
+                messages = await self.consumer.poll_messages(
+                    max_messages=100,
+                    timeout_ms=1000,
+                )
 
                 if not messages:
                     continue
 
-                # Process messages by partition
-                for topic_partition, partition_messages in messages.items():
-                    for message in partition_messages:
-                        await self._process_single_message(message)
+                # Process each message
+                for message in messages:
+                    await self._process_single_message(message)
 
             except asyncio.CancelledError:
                 self.logger.info("Processing loop cancelled")
@@ -252,16 +253,16 @@ class GoogleDriveWorker:
                 )
                 await asyncio.sleep(1)  # Backoff on error
 
-    async def _process_single_message(self, message: Any) -> None:
+    async def _process_single_message(self, message: KafkaMessage) -> None:
         """Process a single Kafka message.
 
         Args:
-            message: Kafka message from consumer
+            message: Kafka message from consumer (toolkit KafkaMessage)
         """
         topic = message.topic
         key = message.key
         value = message.value
-        headers = dict(message.headers) if message.headers else {}
+        headers = message.headers
 
         # Extract connection ID for concurrency control
         connection_id = value.get("integration_connection_id", "unknown")
@@ -446,8 +447,9 @@ class GoogleDriveWorker:
         """
         idempotency_key = record.get("idempotency_key")
 
-        # Check idempotency cache
-        if self.idempotency_cache.has(idempotency_key):
+        # Check idempotency cache (atomic check-and-set)
+        if not self.idempotency_cache.check_and_set(idempotency_key):
+            # Returns False if key already exists (duplicate)
             self.logger.debug(
                 "Skipping duplicate record",
                 idempotency_key=idempotency_key,
@@ -471,12 +473,12 @@ class GoogleDriveWorker:
             )
             self.metrics["payloads_offloaded_to_s3"] += 1
 
-        # Add headers
-        headers = [
-            ("source", self.settings.service_name.encode("utf-8")),
-            ("produced_at", datetime.utcnow().isoformat().encode("utf-8")),
-            ("idempotency_key", record["idempotency_key"].encode("utf-8")),
-        ]
+        # Add headers (toolkit producer expects Dict[str, str])
+        headers = {
+            "source": self.settings.service_name,
+            "produced_at": datetime.utcnow().isoformat(),
+            "idempotency_key": record["idempotency_key"],
+        }
 
         await self.producer.send(
             topic=topic,
@@ -485,16 +487,7 @@ class GoogleDriveWorker:
             headers=headers,
         )
 
-        # Add to idempotency cache after successful production
-        self.idempotency_cache.add(idempotency_key)
-
-        # Extract headers for logging
-        headers_dict = {}
-        for header_name, header_value in headers:
-            if isinstance(header_value, bytes):
-                headers_dict[header_name] = header_value.decode('utf-8')
-            else:
-                headers_dict[header_name] = header_value
+        # Note: idempotency key already added to cache via check_and_set() above
 
         self.logger.info(
             "message_produced_to_kafka",
@@ -505,7 +498,7 @@ class GoogleDriveWorker:
             resource_id=record.get("resource_id"),
             idempotency_key=idempotency_key,
             message_id=record.get("message_id"),
-            headers=headers_dict
+            headers=headers
         )
 
     async def _produce_error(

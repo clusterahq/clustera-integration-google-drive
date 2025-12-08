@@ -9,7 +9,7 @@ from datetime import datetime
 
 from google_drive_worker.handlers.base import BaseIntegrationHandler
 from google_drive_worker.config import settings
-from clustera_toolkit.storage import S3Client
+from clustera_integration_toolkit.storage import S3Client
 
 
 class ConcreteHandler(BaseIntegrationHandler):

@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class KafkaConfig(BaseSettings):
-    """Kafka-related configuration."""
+    """Kafka-related configuration - simplified for use with toolkit's KafkaConfig."""
 
     model_config = SettingsConfigDict(env_prefix="KAFKA_")
 
@@ -25,45 +25,6 @@ class KafkaConfig(BaseSettings):
         default="latest",
         description="Where to start consuming if no offset exists",
     )
-    max_poll_records: int = Field(
-        default=100,
-        description="Maximum records per poll",
-    )
-    session_timeout_ms: int = Field(
-        default=30000,
-        description="Consumer session timeout in milliseconds",
-    )
-    heartbeat_interval_ms: int = Field(
-        default=3000,
-        description="Consumer heartbeat interval in milliseconds",
-    )
-    enable_auto_commit: bool = Field(
-        default=False,
-        description="Auto-commit offsets (MUST be False for manual commits)",
-    )
-    producer_compression_type: str = Field(
-        default="snappy",
-        description="Compression type for producer",
-    )
-    producer_acks: Literal["all", "1", "0"] = Field(
-        default="all",
-        description="Producer acknowledgment level",
-    )
-    producer_enable_idempotence: bool = Field(
-        default=True,
-        description="Enable idempotent producer",
-    )
-    producer_max_in_flight_requests_per_connection: int = Field(
-        default=5,
-        description="Max in-flight requests per connection",
-    )
-
-    @field_validator("enable_auto_commit")
-    def validate_auto_commit(cls, v: bool) -> bool:
-        """Ensure auto-commit is disabled per anti-patterns."""
-        if v:
-            raise ValueError("Auto-commit MUST be disabled. Use manual offset commits.")
-        return v
 
 
 class WorkerConfig(BaseSettings):

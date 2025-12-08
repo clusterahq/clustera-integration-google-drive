@@ -12,8 +12,7 @@ description = "Google Drive integration worker for Clustera Integrations platfor
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "clustera-integration-toolkit @ file:///Users/user/work/clustera/github.com/clusterahq/integrations-bridge/modules/clustera-integration_helper-toolkit",
-    "aiokafka>=0.11.0",
+    "clustera-integration-toolkit[kafka,storage] @ file:///Users/user/work/clustera/github.com/clusterahq/integrations-bridge/modules/clustera-integration_helper-toolkit",
     "python-snappy>=0.7.0",
     "httpx>=0.27.0",
     "pydantic>=2.0.0",

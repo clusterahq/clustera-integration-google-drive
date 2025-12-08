@@ -12,7 +12,7 @@ import hashlib
 import json
 import uuid
 import structlog
-from clustera_toolkit.storage import S3Client
+from clustera_integration_toolkit.storage import S3Client
 
 from ..utils.errors import IntegrationError
 from ..config import settings
