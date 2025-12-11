@@ -71,7 +71,7 @@ graph TB
     subgraph "Kafka Topics"
         IT[integration.trigger]
         WR[webhook.raw]
-        ID[ingestion.data]
+        ID[integrations-incoming-records]
         IE[integration.errors]
     end
 
@@ -130,8 +130,8 @@ async def process_trigger(trigger):
         file_data = await client.get_file(change.file_id)
         normalized = normalize_file(file_data)
 
-        # Produce to ingestion.data
-        await producer.send("ingestion.data", normalized)
+        # Produce to integrations-incoming-records
+        await producer.send("integrations-incoming-records", normalized)
 
 # 3. Normalized output
 output = {

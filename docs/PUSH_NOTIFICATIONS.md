@@ -167,7 +167,7 @@ X-Goog-Message-Number: 1
    - Extracts `pageToken` from `resourceUri`
    - Calls Changes API with the token
    - Fetches actual file data for each change
-   - Transforms and produces to `ingestion.data`
+   - Transforms and produces to `integrations-incoming-records`
 
 ## Security Considerations
 
