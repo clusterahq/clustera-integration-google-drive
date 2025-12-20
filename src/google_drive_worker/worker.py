@@ -540,16 +540,17 @@ class GoogleDriveWorker:
         if isinstance(error, IntegrationError):
             error_record["error"].update(error.to_dict())
 
+        # Partition key is provider_name for error topic (enables provider-specific monitoring)
         await self.producer.send(
             topic=topic,
-            key=connection_id,
+            key="google-drive",
             value=error_record,
         )
 
         self.logger.info(
             "message_produced_to_kafka",
             topic=topic,
-            key=connection_id,
+            key="google-drive",
             record_type="error",
             error_type=type(error).__name__,
             message_id=error_record.get("message_id"),
