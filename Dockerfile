@@ -3,9 +3,14 @@
 # Stage 1: Build environment
 FROM python:3.11-slim AS builder
 
+# Accept GitHub token as build argument for private toolkit repo
+ARG GITHUB_TOKEN
+RUN test -n "$GITHUB_TOKEN" || (echo "ERROR: GITHUB_TOKEN build arg is required" && exit 1)
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast dependency management
@@ -14,13 +19,14 @@ RUN pip install --no-cache-dir uv
 # Set working directory
 WORKDIR /app
 
-# Copy the shared toolkit library
-COPY lib/clustera-integration_helper-toolkit lib/clustera-integration_helper-toolkit
-
-# Copy dependency files
+# Copy dependency files first (for better layer caching)
 COPY pyproject.toml ./
 COPY README.md ./
 COPY uv.lock* ./
+
+# Clone the toolkit repo using GitHub token
+# Railway provides GITHUB_TOKEN via service variable
+RUN git clone --depth 1 https://${GITHUB_TOKEN}@github.com/clusterahq/clustera-integration_helper-toolkit.git lib/clustera-integration_helper-toolkit
 
 # Copy source code (needed for editable install)
 COPY src ./src

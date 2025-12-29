@@ -1,5 +1,10 @@
 # Railway Configuration - Google Drive Integration Worker
 # https://docs.railway.app/reference/config-as-code
+#
+# SETUP REQUIRED:
+# 1. Create a GitHub Personal Access Token with 'repo' scope
+# 2. Add it as a Railway service variable: GITHUB_TOKEN=ghp_xxxxx
+# 3. Railway will automatically pass it as a build arg
 
 [build]
 builder = "dockerfile"
