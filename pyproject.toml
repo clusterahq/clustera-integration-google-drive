@@ -2,6 +2,9 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/google_drive_worker"]
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
@@ -12,7 +15,7 @@ description = "Google Drive integration worker for Clustera Integrations platfor
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "clustera-integration-toolkit[kafka,storage] @ file:///Users/user/work/clustera/github.com/clusterahq/integrations-bridge/modules/clustera-integration_helper-toolkit",
+    "clustera-integration-toolkit[kafka,storage] @ {root:uri}/lib/clustera-integration_helper-toolkit",
     "python-snappy>=0.7.0",
     "httpx>=0.27.0",
     "pydantic>=2.0.0",
