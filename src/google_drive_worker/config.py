@@ -216,6 +216,17 @@ class Settings(BaseSettings):
         description="Service version",
     )
 
+    @field_validator("environment", mode="before")
+    @classmethod
+    def normalize_environment(cls, v: str) -> str:
+        """Normalize environment aliases to full names."""
+        env_aliases = {
+            "dev": "development",
+            "stg": "staging",
+            "prod": "production",
+        }
+        return env_aliases.get(v, v)
+
     # Sub-configurations
     kafka: KafkaConfig = Field(default_factory=KafkaConfig)
     worker: WorkerConfig = Field(default_factory=WorkerConfig)
