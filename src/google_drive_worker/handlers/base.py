@@ -12,7 +12,7 @@ import hashlib
 import json
 import uuid
 import structlog
-from clustera_integration_toolkit.storage import S3Client
+from clustera_integration_toolkit.storage import S3Client, ObjectStorageConfig
 
 from ..utils.errors import IntegrationError
 from ..config import settings
@@ -44,11 +44,14 @@ class BaseIntegrationHandler(ABC):
         self.logger = logger or structlog.get_logger()
 
         # Initialize S3 client for payload offloading
-        self.s3_client = S3Client(
-            bucket_name=settings.s3.bucket_name,
-            endpoint_url=settings.s3.endpoint_url,
-            region=settings.s3.region,
+        storage_config = ObjectStorageConfig(
+            endpoint_url=settings.s3.endpoint_url or "",
+            access_key_id=settings.s3.access_key_id or "",
+            secret_access_key=settings.s3.secret_access_key or "",
+            bucket=settings.s3.bucket_name,
+            region=settings.s3.region or "auto",
         )
+        self.s3_client = S3Client(storage_config)
 
     @abstractmethod
     async def can_handle(self, message: Dict[str, Any]) -> bool:
