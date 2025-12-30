@@ -9,6 +9,7 @@ This module contains the core worker logic that:
 
 import asyncio
 import json
+import logging
 import signal
 import sys
 import time
@@ -309,7 +310,7 @@ class GoogleDriveWorker:
         retry=retry_if_exception_type(RetriableError),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2.0, max=60.0),
-        before_sleep=before_sleep_log(structlog.get_logger(), structlog.INFO),
+        before_sleep=before_sleep_log(structlog.get_logger(), logging.INFO),
     )
     async def _process_with_retry(
         self,
