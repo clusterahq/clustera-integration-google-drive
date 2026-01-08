@@ -31,6 +31,7 @@ from clustera_integration_toolkit.kafka import (
     KafkaConfig,
     KafkaMessage,
 )
+from clustera_integration_toolkit.message import IncomingMessageBuilder
 
 from .config import Settings
 from .handlers.trigger import GoogleDriveTriggerHandler
@@ -330,7 +331,8 @@ class GoogleDriveWorker:
         """
         record_count = 0
         async for record in handler.process_message(message, connection_config):
-            await self._produce_record(record)
+            # Plan 35/36: Pass connection_config for snowball extraction
+            await self._produce_record(record, connection_config=connection_config)
             record_count += 1
             self.metrics["records_produced"] += 1
         return record_count
@@ -440,11 +442,16 @@ class GoogleDriveWorker:
                 duration = time.time() - start_time
                 self.metrics["processing_time_seconds"] += duration
 
-    async def _produce_record(self, record: Dict[str, Any]) -> None:
+    async def _produce_record(
+        self,
+        record: Dict[str, Any],
+        connection_config: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Produce a record to ingestion.data topic with idempotency check.
 
         Args:
             record: Normalized record to produce
+            connection_config: Connection configuration (for snowball in Plan 35/36)
         """
         idempotency_key = record.get("idempotency_key")
 
@@ -474,17 +481,32 @@ class GoogleDriveWorker:
             )
             self.metrics["payloads_offloaded_to_s3"] += 1
 
+        # Plan 35/36: Extract snowball from connection_config
+        config = connection_config or {}
+        snowball = config.get("snowball_clusterspace")
+
+        # Build message using IncomingMessageBuilder for proper JSON-RPC 2.0 format
+        message = IncomingMessageBuilder.build_from_worker(
+            customer_id=record.get("customer_id", "unknown"),
+            integration_provider_name="google-drive",
+            integration_connection_id=key,
+            payload=record,
+            idempotency_key=idempotency_key,
+            event_type=record.get("resource_type", "fetch"),
+            snowball=snowball,  # Plan 35/36: Include snowball in header
+        )
+
         # Add headers (toolkit producer expects Dict[str, str])
         headers = {
             "source": self.settings.service_name,
             "produced_at": datetime.utcnow().isoformat(),
-            "idempotency_key": record["idempotency_key"],
+            "idempotency_key": idempotency_key,
         }
 
         await self.producer.send(
             topic=topic,
             key=key,
-            value=record,
+            value=message,
             headers=headers,
         )
 
