@@ -23,7 +23,7 @@ from clustera_integration_toolkit.message import RecordSubmitBuilder
 
 from google_drive_worker.client.drive_api import GoogleDriveAPIClient
 from google_drive_worker.config import GoogleDriveAPIConfig, StorageConfig
-from google_drive_worker.handlers.base import BaseGoogleDriveHandler
+from google_drive_worker.handlers.base import BaseActionHandler
 from google_drive_worker.handlers.content_emitter import ContentIngestEmitter
 from google_drive_worker.normalization.transformer import GoogleDriveDataTransformer
 from google_drive_worker.schemas.fetch import (
@@ -49,7 +49,7 @@ FetchResourceType = Literal[
 ]
 
 
-class FetchHandler(BaseGoogleDriveHandler):
+class FetchHandler(BaseActionHandler):
     """Handler for fetch requests (JSON-RPC 2.0 format).
 
     Fetches Google Drive resources based on resource_type, filters, and pagination.

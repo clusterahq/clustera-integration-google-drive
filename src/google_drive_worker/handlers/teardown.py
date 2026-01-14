@@ -14,7 +14,7 @@ from clustera_integration_toolkit.control_plane import ControlPlaneClient, Contr
 
 from google_drive_worker.client.drive_api import GoogleDriveAPIClient
 from google_drive_worker.config import GoogleDriveAPIConfig
-from google_drive_worker.handlers.base import BaseGoogleDriveHandler
+from google_drive_worker.handlers.base import BaseActionHandler
 from google_drive_worker.utils.errors import ValidationError
 
 # State keys (must match init.py when it's created)
@@ -22,7 +22,7 @@ STATE_KEY_CHANNEL_ID = "google_drive_channel_id"
 STATE_KEY_RESOURCE_ID = "google_drive_resource_id"
 
 
-class TeardownHandler(BaseGoogleDriveHandler):
+class TeardownHandler(BaseActionHandler):
     """Handler for teardown action.
 
     Stops Google Drive push notification webhooks and cleans up resources.

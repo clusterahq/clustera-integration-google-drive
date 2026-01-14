@@ -16,7 +16,7 @@ from clustera_integration_toolkit.message.message_dictionary import ConnectionRe
 
 from ..client.drive_api import GoogleDriveAPIClient
 from ..config import GoogleDriveAPIConfig
-from google_drive_worker.handlers.base import BaseGoogleDriveHandler
+from google_drive_worker.handlers.base import BaseActionHandler
 from google_drive_worker.utils.errors import ValidationError
 
 # State keys for storing channel information
@@ -27,7 +27,7 @@ STATE_KEY_CHANNEL_EXPIRATION = "google_drive_channel_expiration"
 STATE_KEY_CHANNEL_TOKEN = "google_drive_channel_token"
 
 
-class InitHandler(BaseGoogleDriveHandler):
+class InitHandler(BaseActionHandler):
     """Handler for init action.
 
     Validates Google Drive API access and optionally sets up push notification

@@ -24,13 +24,13 @@ from clustera_integration_toolkit.control_plane import (
 
 from google_drive_worker.client.drive_api import GoogleDriveAPIClient
 from google_drive_worker.config import GoogleDriveAPIConfig, StorageConfig
-from google_drive_worker.handlers.base import BaseGoogleDriveHandler
+from google_drive_worker.handlers.base import BaseActionHandler
 from google_drive_worker.handlers.content_emitter import ContentIngestEmitter
 from google_drive_worker.normalization.transformer import GoogleDriveDataTransformer
 from google_drive_worker.utils.errors import ValidationError, RetriableError, TerminalError
 
 
-class WebhookHandler(BaseGoogleDriveHandler):
+class WebhookHandler(BaseActionHandler):
     """Handle push notifications from Google Drive.
 
     Per Phase 5 (Webhook External ID Resolution):

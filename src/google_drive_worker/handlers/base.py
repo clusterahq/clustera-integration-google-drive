@@ -20,7 +20,7 @@ from clustera_integration_toolkit.handlers import (
 )
 
 
-class BaseIntegrationHandler(ToolkitBaseActionHandler):
+class BaseActionHandler(ToolkitBaseActionHandler):
     """Google Drive-specific base handler extending toolkit's BaseActionHandler.
 
     Inherits from toolkit's BaseActionHandler to get:
@@ -166,3 +166,6 @@ class BaseIntegrationHandler(ToolkitBaseActionHandler):
 
     # NOTE: create_simplified_response() and create_error_response() are also
     # inherited from ToolkitBaseActionHandler for standardized response building
+
+# Legacy alias for backward compatibility
+BaseIntegrationHandler = BaseActionHandler

@@ -11,12 +11,12 @@ from typing import Any, Literal
 
 from google_drive_worker.client.drive_api import GoogleDriveAPIClient
 from google_drive_worker.config import GoogleDriveAPIConfig
-from google_drive_worker.handlers.base import BaseGoogleDriveHandler
+from google_drive_worker.handlers.base import BaseActionHandler
 from google_drive_worker.schemas.write import WriteOperation, validate_write_payload
 from google_drive_worker.utils.errors import ValidationError
 
 
-class WriteHandler(BaseGoogleDriveHandler):
+class WriteHandler(BaseActionHandler):
     """Handler for write action.
 
     Performs write operations on Google Drive:
