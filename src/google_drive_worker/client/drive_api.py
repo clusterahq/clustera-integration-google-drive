@@ -381,6 +381,178 @@ class GoogleDriveAPIClient:
 
         return revisions
 
+    async def get_about(
+        self,
+        fields: str = "user,storageQuota",
+    ) -> Dict[str, Any]:
+        """Get information about the user's Drive.
+
+        Provides user email and storage quota information.
+        Used to validate access during initialization.
+
+        Args:
+            fields: Comma-separated fields to include in response
+
+        Returns:
+            About resource with user and quota information
+
+        Raises:
+            TerminalError: For permanent failures (invalid credentials)
+            RetriableError: For temporary failures (network, rate limits)
+
+        Example response:
+            {
+                "user": {
+                    "emailAddress": "user@example.com",
+                    "displayName": "John Doe"
+                },
+                "storageQuota": {
+                    "limit": "16106127360",
+                    "usage": "1073741824"
+                }
+            }
+        """
+        url = f"{self.BASE_URL}/about"
+        params = {"fields": fields}
+
+        logger.debug(
+            "Fetching Drive about info",
+            fields=fields,
+        )
+
+        response = await self._make_request("GET", url, params=params)
+
+        logger.info(
+            "Successfully fetched Drive about info",
+            email=response.get("user", {}).get("emailAddress"),
+        )
+
+        return response
+
+    async def watch_changes(
+        self,
+        page_token: str,
+        channel_id: str,
+        webhook_url: str,
+        channel_token: Optional[str] = None,
+        expiration: Optional[int] = None,
+        include_shared_drives: bool = True,
+    ) -> Dict[str, Any]:
+        """Set up push notifications for Drive changes.
+
+        Creates a notification channel that sends HTTPS POST requests to the
+        specified webhook URL when files change. Channels expire after a maximum
+        of 24 hours and must be renewed.
+
+        Args:
+            page_token: Starting page token (from get_start_page_token)
+            channel_id: Unique channel ID (UUID recommended)
+            webhook_url: HTTPS URL to receive notifications
+            channel_token: Optional verification token sent with notifications
+            expiration: Optional expiration timestamp in milliseconds (max 24 hours)
+            include_shared_drives: Include shared drive items
+
+        Returns:
+            Response with channel information:
+            {
+                "kind": "api#channel",
+                "id": "channel_id",
+                "resourceId": "resource_id_xyz",
+                "resourceUri": "https://www.googleapis.com/drive/v3/changes?pageToken=...",
+                "expiration": "1234567890000"
+            }
+
+        Raises:
+            TerminalError: For permanent failures (invalid webhook URL, bad credentials)
+            RetriableError: For temporary failures (network, rate limits)
+        """
+        url = f"{self.BASE_URL}/changes/watch"
+
+        # Build channel body
+        channel_body = {
+            "id": channel_id,
+            "type": "web_hook",
+            "address": webhook_url,
+        }
+
+        if channel_token:
+            channel_body["token"] = channel_token
+
+        if expiration:
+            channel_body["expiration"] = expiration
+
+        # Build query parameters
+        params = {
+            "pageToken": page_token,
+            "supportsAllDrives": include_shared_drives,
+            "includeItemsFromAllDrives": include_shared_drives,
+        }
+
+        logger.info(
+            "Creating Google Drive notification channel",
+            channel_id=channel_id,
+            webhook_url=webhook_url,
+            expiration=expiration,
+        )
+
+        response = await self._make_request(
+            "POST",
+            url,
+            params=params,
+            json_data=channel_body,
+        )
+
+        logger.info(
+            "Successfully created notification channel",
+            channel_id=response.get("id"),
+            resource_id=response.get("resourceId"),
+            expiration=response.get("expiration"),
+        )
+
+        return response
+
+    async def stop_channel(
+        self,
+        channel_id: str,
+        resource_id: str,
+    ) -> None:
+        """Stop receiving push notifications for a channel.
+
+        Cancels an active notification channel. After calling this, the webhook
+        URL will no longer receive notifications for this channel.
+
+        Args:
+            channel_id: The channel ID to stop
+            resource_id: The resource ID from watch response
+
+        Raises:
+            TerminalError: For permanent failures (channel not found)
+            RetriableError: For temporary failures (network, rate limits)
+        """
+        url = f"{self.BASE_URL}/channels/stop"
+
+        channel_body = {
+            "id": channel_id,
+            "resourceId": resource_id,
+        }
+
+        logger.info(
+            "Stopping Google Drive notification channel",
+            channel_id=channel_id,
+            resource_id=resource_id,
+        )
+
+        await self._make_request(
+            "POST",
+            url,
+            json_data=channel_body,
+        )
+
+        logger.info(
+            "Successfully stopped notification channel",
+            channel_id=channel_id,
+        )
+
     async def _make_request(
         self,
         method: str,
