@@ -221,7 +221,7 @@ wheels = [
 [[package]]
 name = "clustera-integration-toolkit"
 version = "0.2.0"
-source = { directory = "../clustera-integration_helper-toolkit" }
+source = { directory = "lib/clustera-integration_helper-toolkit" }
 dependencies = [
     { name = "cachetools" },
     { name = "httpx" },
@@ -543,7 +543,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
-    { name = "clustera-integration-toolkit", extras = ["kafka", "storage"], directory = "../clustera-integration_helper-toolkit" },
+    { name = "clustera-integration-toolkit", extras = ["kafka", "storage"], directory = "lib/clustera-integration_helper-toolkit" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
