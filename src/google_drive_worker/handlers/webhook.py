@@ -575,3 +575,7 @@ class WebhookHandler(BaseActionHandler):
         # resourceUri is required for change notifications (not for stop notifications)
         if payload.get("kind") != "drive#stop" and "resourceUri" not in payload:
             raise ValidationError("Missing resourceUri in webhook payload")
+
+
+# Legacy alias for backward compatibility
+GoogleDriveWebhookHandler = WebhookHandler
