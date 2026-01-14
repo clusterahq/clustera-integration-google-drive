@@ -2,56 +2,131 @@
 
 Processes webhook messages from the webhook.raw topic when Google Drive
 sends push notifications about file changes.
+
+Per Phase 5 (Webhook External ID Resolution):
+- Extracts emailAddress from Google Drive push notification
+- Resolves connection by external_id (email) using Control Plane
+- Caches resolutions for 5-minute TTL
 """
 
-from typing import Any, Dict, AsyncIterator, Optional
+from __future__ import annotations
+
+from typing import Any
 import uuid
 from urllib.parse import urlparse, parse_qs
-import structlog
+from collections.abc import AsyncGenerator
 
-from .base import BaseIntegrationHandler
-from ..client.drive_api import GoogleDriveAPIClient
-from ..config import GoogleDriveAPIConfig
-from ..normalization.transformer import GoogleDriveDataTransformer
-from ..utils.errors import ValidationError, RetriableError, TerminalError
+from clustera_integration_toolkit.control_plane import (
+    ConnectionResolver,
+    ControlPlaneNotFoundError,
+    ResolvedConnection,
+)
+
+from google_drive_worker.client.drive_api import GoogleDriveAPIClient
+from google_drive_worker.config import GoogleDriveAPIConfig, StorageConfig
+from google_drive_worker.handlers.base import BaseGoogleDriveHandler
+from google_drive_worker.handlers.content_emitter import ContentIngestEmitter
+from google_drive_worker.normalization.transformer import GoogleDriveDataTransformer
+from google_drive_worker.utils.errors import ValidationError, RetriableError, TerminalError
 
 
-class GoogleDriveWebhookHandler(BaseIntegrationHandler):
-    """Handle push notifications from Google Drive."""
+class WebhookHandler(BaseGoogleDriveHandler):
+    """Handle push notifications from Google Drive.
+
+    Per Phase 5 (Webhook External ID Resolution):
+    - Extracts emailAddress from Google Drive push notification
+    - Resolves connection by external_id (email) using Control Plane
+    - Caches resolutions for 5-minute TTL
+    """
+
+    SUPPORTED_ACTIONS = {"webhook"}
+    SUPPORTED_METHODS = {"clustera.integration.webhook"}
 
     def __init__(
         self,
         api_config: GoogleDriveAPIConfig,
-        logger: Optional[structlog.BoundLogger] = None,
+        storage_config: StorageConfig | None = None,
+        provider_name: str | None = None,
     ):
         """Initialize the webhook handler.
 
         Args:
             api_config: Google Drive API configuration
-            logger: Structured logger instance
+            storage_config: Storage configuration
+            provider_name: Provider name for external ID resolution (e.g., "google-drive")
         """
-        super().__init__(integration_id="google-drive", logger=logger)
-        self.api_config = api_config
+        super().__init__(api_config)
+        self.storage_config = storage_config or StorageConfig()
+        self.provider_name = provider_name
         self.transformer = GoogleDriveDataTransformer()
+        self._content_emitter: ContentIngestEmitter | None = None
+        self._connection_resolver: ConnectionResolver | None = None
 
-    async def can_handle(self, message: Dict[str, Any]) -> bool:
-        """Check if this handler can process the message.
+    @property
+    def content_emitter(self) -> ContentIngestEmitter:
+        """Lazy-initialize content ingest emitter."""
+        if self._content_emitter is None:
+            self._content_emitter = ContentIngestEmitter(
+                api_config=self.api_config,
+                storage_config=self.storage_config,
+                logger=self.logger,
+            )
+        return self._content_emitter
+
+    @property
+    def connection_resolver(self) -> ConnectionResolver | None:
+        """Lazy-initialize connection resolver for external ID lookups.
+
+        Returns None if provider_name was not provided during initialization.
+        """
+        if self.provider_name is None:
+            return None
+
+        if self._connection_resolver is None:
+            self._connection_resolver = ConnectionResolver(
+                provider_name=self.provider_name,
+                external_id_extractor=self._extract_email_from_notification,
+                cache_ttl=300,  # 5 minutes
+                cache_maxsize=1000,
+                logger=self.logger,
+            )
+        return self._connection_resolver
+
+    def _extract_email_from_notification(self, message: dict[str, Any]) -> str:
+        """Extract email address from Google Drive push notification.
+
+        Google Drive push notifications include the user's email in the payload.
 
         Args:
-            message: The Kafka message value
+            message: The webhook message
 
         Returns:
-            True if this is a Google Drive webhook message
+            Email address from notification
+
+        Raises:
+            ValueError: If email address cannot be extracted
         """
-        provider = message.get("provider")
-        integration_id = message.get("integration_id")
-        return provider == "google-drive" or integration_id == "google-drive"
+        # Check JSON-RPC 2.0 format first
+        if message.get("jsonrpc") == "2.0":
+            params = message.get("params", {})
+            payload = params.get("payload", {})
+            email = payload.get("emailAddress")
+            if email:
+                return email
+
+        # Legacy format
+        payload = message.get("payload", {})
+        email = payload.get("emailAddress")
+        if email:
+            return email
+
+        raise ValueError("No emailAddress found in notification payload")
 
     async def process_message(
         self,
-        message: Dict[str, Any],
-        connection_config: Dict[str, Any],
-    ) -> AsyncIterator[Dict[str, Any]]:
+        message: dict[str, Any],
+        connection_config: dict[str, Any],
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Process a webhook notification and yield normalized records.
 
         Google Drive push notifications don't contain the actual changes,
@@ -75,6 +150,74 @@ class GoogleDriveWebhookHandler(BaseIntegrationHandler):
         connection_id = message["integration_connection_id"]
         customer_id = message["customer_id"]
         payload = message.get("payload", {})
+
+        # Check if connection needs to be resolved via external ID
+        needs_resolution = connection_id in ("unknown", "pending_lookup", "")
+        resolved_connection: ResolvedConnection | None = None
+
+        if needs_resolution and self.connection_resolver is not None:
+            email_address = self._extract_email_from_notification(message)
+
+            self.logger.info(
+                "Connection ID unavailable, attempting external ID resolution",
+                email_address=email_address,
+                provider_name=self.provider_name,
+            )
+            try:
+                resolved_connection = await self.connection_resolver.resolve(
+                    message=message,
+                    connection_id=None,  # Force external ID lookup
+                )
+                # Update values from resolved connection
+                connection_id = resolved_connection.connection_id
+                customer_id = resolved_connection.customer_id
+
+                # Merge resolved credentials into connection_config
+                connection_config = {
+                    **connection_config,
+                    "integration_connection_id": resolved_connection.connection_id,
+                    "customer_id": resolved_connection.customer_id,
+                    "snowball_id": resolved_connection.snowball_id,
+                    "access_token": resolved_connection.credentials.access_token,
+                    "refresh_token": resolved_connection.credentials.refresh_token,
+                }
+
+                self.logger.info(
+                    "Connection resolved via external ID",
+                    connection_id=connection_id,
+                    customer_id=customer_id,
+                    resolved_via=resolved_connection.resolved_via,
+                    email_address=email_address,
+                )
+
+            except ControlPlaneNotFoundError as e:
+                self.logger.error(
+                    "Failed to resolve connection by external ID",
+                    email_address=email_address,
+                    error=str(e),
+                )
+                raise TerminalError(
+                    f"No connection found for email: {email_address}",
+                    category="connection_resolution",
+                    details={
+                        "error_code": "CONNECTION_NOT_FOUND",
+                        "email_address": email_address,
+                    },
+                ) from e
+
+            except ValueError as e:
+                # Could not extract external ID from message
+                self.logger.error(
+                    "Failed to extract external ID from webhook message",
+                    error=str(e),
+                )
+                raise TerminalError(
+                    f"Cannot extract email from webhook message: {e}",
+                    category="connection_resolution",
+                    details={
+                        "error_code": "EXTERNAL_ID_EXTRACTION_FAILED",
+                    },
+                ) from e
 
         self.logger.info(
             "Processing Google Drive webhook",
@@ -131,9 +274,9 @@ class GoogleDriveWebhookHandler(BaseIntegrationHandler):
     async def _fetch_file_content(
         self,
         api_client: GoogleDriveAPIClient,
-        file_data: Dict[str, Any],
+        file_data: dict[str, Any],
         connection_id: str,
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         """Fetch file content for Google Workspace files that need export.
 
         Args:
@@ -206,9 +349,9 @@ class GoogleDriveWebhookHandler(BaseIntegrationHandler):
         connection_id: str,
         customer_id: str,
         page_token: str,
-        connection_config: Dict[str, Any],
-        message: Dict[str, Any],
-    ) -> AsyncIterator[Dict[str, Any]]:
+        connection_config: dict[str, Any],
+        message: dict[str, Any],
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Fetch changes from Google Drive using the Changes API.
 
         Args:
@@ -310,34 +453,30 @@ class GoogleDriveWebhookHandler(BaseIntegrationHandler):
                         connection_id=connection_id,
                     )
 
-                # Normalize the file data
-                resource_type = "folder" if is_folder else "file"
-                resource_id = file_data.get("id")
+                # Get snowball_id for content.ingest (required)
+                snowball_id = connection_config.get("snowball_id")
+                if not snowball_id:
+                    self.logger.warning(
+                        "Missing snowball_id in connection config, skipping file",
+                        connection_id=connection_id,
+                        file_id=file_data.get("id"),
+                    )
+                    continue
 
-                normalized_data = self.transformer.transform_file(
-                    raw_file=file_data,
-                    connection_id=connection_id,
+                # Use ContentIngestEmitter to build content.ingest message
+                # This ensures consistent message format between webhook and backfill paths
+                yield await self.content_emitter.process_file_for_ingest(
+                    file_data=file_data,
+                    connection_config=connection_config,
                     customer_id=customer_id,
-                )
-
-                # Create ingestion envelope
-                yield await self.create_ingestion_envelope(
-                    message_id=str(uuid.uuid4()),
-                    customer_id=customer_id,
-                    connection_id=connection_id,
-                    resource_type=resource_type,
-                    resource_id=resource_id,
-                    data=normalized_data,
-                    content=file_content,
-                    metadata={
+                    snowball_id=snowball_id,
+                    batch_context={
+                        "batch_id": str(uuid.uuid4()),
+                        "batch_sequence": total_yielded,
+                        "batch_is_last": False,  # Webhooks don't track "last" message
+                        "batch_page_token": page_token,
                         "source": "webhook",
-                        "trigger_type": "push_notification",
                         "change_type": change.get("changeType", "file"),
-                        "page_token": page_token[:20] + "..." if len(page_token) > 20 else page_token,
-                        "source_format": "google_drive_api_v3",
-                        "transformation_version": "1.0.0",
-                        "has_content": file_content is not None,
-                        "content_size_bytes": len(file_content) if file_content else 0,
                     },
                 )
                 total_yielded += 1
@@ -372,7 +511,7 @@ class GoogleDriveWebhookHandler(BaseIntegrationHandler):
             )
             raise RetriableError(f"Failed to fetch changes: {e}")
 
-    def _extract_page_token(self, resource_uri: str) -> Optional[str]:
+    def _extract_page_token(self, resource_uri: str) -> str | None:
         """Extract page token from Google Drive resource URI.
 
         The resource URI looks like:
@@ -400,25 +539,7 @@ class GoogleDriveWebhookHandler(BaseIntegrationHandler):
             )
             return None
 
-    def generate_idempotency_key(
-        self,
-        connection_id: str,
-        resource_type: str,
-        resource_id: str,
-    ) -> str:
-        """Generate deterministic idempotency key.
-
-        Args:
-            connection_id: Integration connection ID
-            resource_type: Type of resource (file, folder, etc.)
-            resource_id: Unique resource ID
-
-        Returns:
-            Idempotency key following pattern
-        """
-        return f"google-drive:{connection_id}:{resource_type}:{resource_id}"
-
-    def _validate_webhook_message(self, message: Dict[str, Any]) -> None:
+    def _validate_webhook_message(self, message: dict[str, Any]) -> None:
         """Validate required fields in webhook message.
 
         Args:

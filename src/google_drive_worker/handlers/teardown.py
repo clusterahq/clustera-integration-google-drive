@@ -12,16 +12,17 @@ from typing import Any, Dict, Optional
 
 from clustera_integration_toolkit.control_plane import ControlPlaneClient, ControlPlaneError
 
-from .base import BaseIntegrationHandler
-from ..client.drive_api import GoogleDriveAPIClient
-from ..utils.errors import ValidationError
+from google_drive_worker.client.drive_api import GoogleDriveAPIClient
+from google_drive_worker.config import GoogleDriveAPIConfig
+from google_drive_worker.handlers.base import BaseGoogleDriveHandler
+from google_drive_worker.utils.errors import ValidationError
 
 # State keys (must match init.py when it's created)
 STATE_KEY_CHANNEL_ID = "google_drive_channel_id"
 STATE_KEY_RESOURCE_ID = "google_drive_resource_id"
 
 
-class TeardownHandler(BaseIntegrationHandler):
+class TeardownHandler(BaseGoogleDriveHandler):
     """Handler for teardown action.
 
     Stops Google Drive push notification webhooks and cleans up resources.
@@ -31,34 +32,13 @@ class TeardownHandler(BaseIntegrationHandler):
     SUPPORTED_ACTIONS = {"teardown"}
     SUPPORTED_METHODS = {"clustera.integration.connection.teardown"}
 
-    def __init__(self, integration_id: str = "google-drive", logger: Optional[Any] = None) -> None:
+    def __init__(self, api_config: GoogleDriveAPIConfig) -> None:
         """Initialize teardown handler.
 
         Args:
-            integration_id: The integration identifier
-            logger: Optional structured logger instance
+            api_config: Google Drive API configuration
         """
-        super().__init__(integration_id=integration_id, logger=logger)
-
-    async def can_handle(self, message: Dict[str, Any]) -> bool:
-        """Check if this handler can process the message.
-
-        Args:
-            message: The Kafka message value
-
-        Returns:
-            True if this is a teardown message for Google Drive
-        """
-        # Check JSON-RPC 2.0 format
-        if message.get("method") in self.SUPPORTED_METHODS:
-            return True
-
-        # Check legacy format
-        if message.get("action") in self.SUPPORTED_ACTIONS:
-            integration_id = message.get("integration_id")
-            return integration_id == "google-drive"
-
-        return False
+        super().__init__(api_config)
 
     async def process_message(
         self,
@@ -96,13 +76,13 @@ class TeardownHandler(BaseIntegrationHandler):
             connection_id=connection_id,
         )
 
-        # Initialize API client
-        api_client = GoogleDriveAPIClient(
-            access_token=connection_config.get("access_token", ""),
-            refresh_token=connection_config.get("refresh_token", ""),
-            client_id=connection_config.get("client_id", ""),
-            client_secret=connection_config.get("client_secret", ""),
-        )
+        # TODO: Initialize API client
+        # api_client = GoogleDriveAPIClient(
+        #     config=self.api_config,
+        #     access_token=connection_config.get("access_token", ""),
+        #     logger=self.logger,
+        #     refresh_token=connection_config.get("refresh_token", ""),
+        # )
 
         api_calls = 0
         start_time = datetime.now(timezone.utc)
@@ -126,12 +106,13 @@ class TeardownHandler(BaseIntegrationHandler):
 
                 # Stop the channel if we have the info
                 if channel_id and resource_id:
-                    await api_client.stop_channel(
-                        channel_id=channel_id,
-                        resource_id=resource_id,
-                    )
-                    api_calls += 1
-                    channel_stopped = True
+                    # TODO: Stop the channel using API client
+                    # await api_client.stop_channel(
+                    #     channel_id=channel_id,
+                    #     resource_id=resource_id,
+                    # )
+                    # api_calls += 1
+                    # channel_stopped = True
 
                     self.logger.info(
                         "Google Drive watch channel stopped",
@@ -196,7 +177,8 @@ class TeardownHandler(BaseIntegrationHandler):
             yield  # pragma: no cover - makes this an async generator
 
         finally:
-            await api_client.close()
+            # await api_client.close()
+            pass
 
     def _validate_message(self, message: Dict[str, Any]) -> None:
         """Validate required fields in teardown message.
@@ -249,23 +231,3 @@ class TeardownHandler(BaseIntegrationHandler):
                 f"Invalid action for TeardownHandler: {message.get('action')}",
                 field="action",
             )
-
-    def generate_idempotency_key(
-        self,
-        connection_id: str,
-        resource_type: str,
-        resource_id: str,
-    ) -> str:
-        """Generate deterministic idempotency key.
-
-        Pattern: google-drive:{connection_id}:{resource_type}:{resource_id}
-
-        Args:
-            connection_id: Integration connection ID
-            resource_type: Type of resource (file, folder, etc.)
-            resource_id: Unique resource ID
-
-        Returns:
-            Idempotency key following pattern
-        """
-        return f"google-drive:{connection_id}:{resource_type}:{resource_id}"

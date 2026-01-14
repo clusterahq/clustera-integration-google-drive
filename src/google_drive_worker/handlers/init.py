@@ -16,8 +16,8 @@ from clustera_integration_toolkit.message.message_dictionary import ConnectionRe
 
 from ..client.drive_api import GoogleDriveAPIClient
 from ..config import GoogleDriveAPIConfig
-from .base import BaseIntegrationHandler
-from ..utils.errors import ValidationError
+from google_drive_worker.handlers.base import BaseGoogleDriveHandler
+from google_drive_worker.utils.errors import ValidationError
 
 # State keys for storing channel information
 STATE_KEY_PAGE_TOKEN = "google_drive_page_token"
@@ -27,7 +27,7 @@ STATE_KEY_CHANNEL_EXPIRATION = "google_drive_channel_expiration"
 STATE_KEY_CHANNEL_TOKEN = "google_drive_channel_token"
 
 
-class InitHandler(BaseIntegrationHandler):
+class InitHandler(BaseGoogleDriveHandler):
     """Handler for init action.
 
     Validates Google Drive API access and optionally sets up push notification
@@ -62,28 +62,7 @@ class InitHandler(BaseIntegrationHandler):
         Args:
             api_config: Google Drive API configuration
         """
-        super().__init__(integration_id="google-drive")
-        self.api_config = api_config
-
-    async def can_handle(self, message: dict[str, Any]) -> bool:
-        """Check if this handler can process the message.
-
-        Args:
-            message: The Kafka message value
-
-        Returns:
-            True if this is an init message for Google Drive
-        """
-        # Check JSON-RPC 2.0 format
-        if message.get("method") in self.SUPPORTED_METHODS:
-            return True
-
-        # Check legacy format
-        if message.get("action") in self.SUPPORTED_ACTIONS:
-            integration_id = message.get("integration_id")
-            return integration_id == "google-drive"
-
-        return False
+        super().__init__(api_config)
 
     async def process_message(
         self,

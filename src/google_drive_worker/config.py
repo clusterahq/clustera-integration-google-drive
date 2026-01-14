@@ -11,8 +11,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class KafkaConfig(BaseSettings):
     """Kafka-related configuration - simplified for use with toolkit's KafkaConfig."""
 
-    model_config = SettingsConfigDict(env_prefix="KAFKA_")
-
     bootstrap_servers: str = Field(
         default="localhost:9092",
         description="Comma-separated list of Kafka brokers",
@@ -25,6 +23,23 @@ class KafkaConfig(BaseSettings):
         default="latest",
         description="Where to start consuming if no offset exists",
     )
+    enable_auto_commit: bool = Field(
+        default=False,
+        description="Enable auto-commit (MUST be False for at-least-once delivery)",
+    )
+
+    model_config = SettingsConfigDict(env_prefix="KAFKA_")
+
+    @field_validator("enable_auto_commit")
+    @classmethod
+    def validate_auto_commit(cls, v: bool) -> bool:
+        """Ensure auto-commit is disabled for at-least-once delivery."""
+        if v:
+            raise ValueError(
+                "Auto-commit MUST be disabled. Use manual offset commits for "
+                "at-least-once delivery guarantees."
+            )
+        return v
 
 
 class WorkerConfig(BaseSettings):
@@ -79,6 +94,10 @@ class GoogleDriveAPIConfig(BaseSettings):
         default="https://www.googleapis.com/drive/v3",
         description="Google Drive API v3 base URL",
     )
+    mock_mode: bool = Field(
+        default=False,
+        description="Use mock Kafka/API clients (set to true in local dev stack)",
+    )
     api_timeout_seconds: int = Field(
         default=30,
         description="API request timeout in seconds",
@@ -129,31 +148,26 @@ class GoogleDriveAPIConfig(BaseSettings):
     )
 
 
-class S3Config(BaseSettings):
-    """S3-compatible storage configuration for large payloads."""
+class StorageConfig(BaseSettings):
+    """Object storage configuration for large payload offloading.
 
-    model_config = SettingsConfigDict(env_prefix="S3_")
+    Uses the shared toolkit's ObjectStorageClient under the hood.
+    Set STORAGE_MOCK_MODE=true for testing without real S3.
 
-    bucket_name: str = Field(
-        default="clustera-integrations",
-        description="S3 bucket for payload storage",
+    For real storage, configure S3_* environment variables:
+    - S3_ENDPOINT_URL: S3-compatible endpoint (e.g., R2, MinIO)
+    - S3_ACCESS_KEY_ID: Access key (falls back to AWS_ACCESS_KEY_ID)
+    - S3_SECRET_ACCESS_KEY: Secret key (falls back to AWS_SECRET_ACCESS_KEY)
+    - S3_BUCKET: Bucket name
+    - S3_REGION: Region (optional, default: auto)
+    """
+
+    mock_mode: bool = Field(
+        default=False,
+        description="Use mock storage operations (set to true in local dev stack)",
     )
-    endpoint_url: Optional[str] = Field(
-        default=None,
-        description="S3 endpoint URL (for non-AWS S3)",
-    )
-    region: Optional[str] = Field(
-        default="us-east-1",
-        description="AWS region",
-    )
-    access_key_id: Optional[str] = Field(
-        default=None,
-        description="AWS access key ID",
-    )
-    secret_access_key: Optional[str] = Field(
-        default=None,
-        description="AWS secret access key",
-    )
+
+    model_config = SettingsConfigDict(env_prefix="STORAGE_")
 
 
 class ControlPlaneConfig(BaseSettings):
@@ -176,22 +190,18 @@ class ControlPlaneConfig(BaseSettings):
 
 
 class LoggingConfig(BaseSettings):
-    """Structured logging configuration."""
-
-    model_config = SettingsConfigDict(env_prefix="LOG_")
+    """Logging configuration."""
 
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO",
-        description="Log level",
+        description="Logging level",
     )
-    format: Literal["json", "text"] = Field(
+    format: Literal["json", "console"] = Field(
         default="json",
-        description="Log format",
+        description="Log output format",
     )
-    include_traceback: bool = Field(
-        default=True,
-        description="Include traceback in error logs",
-    )
+
+    model_config = SettingsConfigDict(env_prefix="LOG_")
 
 
 class Settings(BaseSettings):
@@ -231,7 +241,7 @@ class Settings(BaseSettings):
     kafka: KafkaConfig = Field(default_factory=KafkaConfig)
     worker: WorkerConfig = Field(default_factory=WorkerConfig)
     google_drive: GoogleDriveAPIConfig = Field(default_factory=GoogleDriveAPIConfig)
-    s3: S3Config = Field(default_factory=S3Config)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
     control_plane: ControlPlaneConfig = Field(default_factory=ControlPlaneConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 

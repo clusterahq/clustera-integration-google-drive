@@ -1,117 +1,101 @@
-"""Base handler interface for integration workers.
+"""Base handler abstraction for Google Drive worker.
 
-This abstract base class defines the contract that all integration handlers
-must implement. It's designed to be provider-agnostic and reusable across
-all integration workers.
+Defines the contract that all handlers must implement.
+Inherits from toolkit's BaseActionHandler to get:
+- Connection credentials fetching (fetch_connection_config)
+- Control Plane client management
+- Simplified request resolution (resolve_resource_type, resolve_limit, etc.)
+- Pagination helpers
 """
 
-from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, AsyncIterator
-from datetime import datetime
-import hashlib
-import json
-import uuid
+from __future__ import annotations
+
+from abc import abstractmethod
+from collections.abc import AsyncGenerator
+from typing import Any, Optional
+
 import structlog
-from clustera_integration_toolkit.storage import S3Client, ObjectStorageConfig
-from clustera_integration_toolkit.control_plane import ControlPlaneClient
-
-from ..utils.errors import IntegrationError
-from ..config import settings
+from clustera_integration_toolkit.handlers import (
+    BaseActionHandler as ToolkitBaseActionHandler,
+)
 
 
-class BaseIntegrationHandler(ABC):
-    """Abstract base class for integration handlers.
+class BaseIntegrationHandler(ToolkitBaseActionHandler):
+    """Google Drive-specific base handler extending toolkit's BaseActionHandler.
 
-    This defines the interface that both trigger handlers and webhook handlers
-    must implement. Each handler is responsible for:
-    1. Processing incoming messages (triggers or webhooks)
-    2. Fetching data from the provider
-    3. Normalizing data to the canonical format
-    4. Handling errors and retries
+    Inherits from toolkit's BaseActionHandler to get:
+    - fetch_connection_config(): Fetch OAuth credentials from Control Plane
+    - control_plane_client: Lazy-initialized Control Plane client
+    - close(): Clean up resources
+    - resolve_resource_type/limit/cursor/filters/options(): Simplified request handling
+    - create_simplified_response/create_error_response(): Response builders
+    - to_provider_pagination(): Pagination format conversion
+
+    Adds Google Drive-specific functionality:
+    - SUPPORTED_ACTIONS routing
+    - JSON-RPC 2.0 message parsing helpers
+    - Google Drive-specific idempotency key pattern
     """
 
-    def __init__(
-        self,
-        integration_id: str,
-        logger: Optional[structlog.BoundLogger] = None,
-    ):
+    # Provider identification (inherited from toolkit, override values)
+    PROVIDER = "google-drive"
+    INTEGRATION_ID = "google-drive"
+    DEFAULT_RESOURCE_TYPE = "files"
+
+    # Default filters for simplified requests (inherited from toolkit)
+    DEFAULT_FILTERS: dict[str, dict[str, Any]] = {
+        "files": {"trashed": False},
+        "folders": {"trashed": False, "mimeType": "application/vnd.google-apps.folder"},
+    }
+
+    # Override in subclass to specify which action(s) this handler processes
+    SUPPORTED_ACTIONS: set[str] = set()
+
+    def __init__(self) -> None:
         """Initialize handler.
 
-        Args:
-            integration_id: The integration identifier (e.g., "google-drive", "github")
-            logger: Structured logger instance
+        Note: Subclasses may pass additional config (e.g., api_config) if needed.
         """
-        self.integration_id = integration_id
-        self.logger = logger or structlog.get_logger()
+        super().__init__()  # Initialize toolkit base (Control Plane client, etc.)
+        self.logger = structlog.get_logger().bind(handler=self.__class__.__name__)
 
-        # Initialize S3 client for payload offloading
-        storage_config = ObjectStorageConfig(
-            endpoint_url=settings.s3.endpoint_url or "",
-            access_key_id=settings.s3.access_key_id or "",
-            secret_access_key=settings.s3.secret_access_key or "",
-            bucket=settings.s3.bucket_name,
-            region=settings.s3.region or "auto",
-        )
-        self.s3_client = S3Client(storage_config)
+    def can_handle(self, message: dict[str, Any]) -> bool:
+        """Determine if this handler can process the given message.
 
-        # Lazy-initialized Control Plane client for state management
-        self._control_plane_client: Optional[ControlPlaneClient] = None
-
-    @property
-    def control_plane_client(self) -> ControlPlaneClient:
-        """Lazy-initialize Control Plane client.
-
-        Returns:
-            Control Plane client instance
-        """
-        if self._control_plane_client is None:
-            self._control_plane_client = ControlPlaneClient(
-                base_url=settings.control_plane.base_url,
-                m2m_token=settings.control_plane.m2m_token,
-                timeout=settings.control_plane.timeout_seconds,
-            )
-        return self._control_plane_client
-
-    @abstractmethod
-    async def can_handle(self, message: Dict[str, Any]) -> bool:
-        """Check if this handler can process the given message.
+        Routes based on action field in the message.
 
         Args:
-            message: The Kafka message value (deserialized JSON)
+            message: The message payload
 
         Returns:
-            True if this handler can process the message, False otherwise
+            True if this handler should process the message
         """
-        pass
+        action = message.get("action")
+        integration_id = message.get("integration_id")
+
+        # Must be a google-drive message with a supported action
+        if integration_id != self.INTEGRATION_ID:
+            return False
+
+        return action in self.SUPPORTED_ACTIONS
 
     @abstractmethod
     async def process_message(
         self,
-        message: Dict[str, Any],
-        connection_config: Dict[str, Any],
-    ) -> AsyncIterator[Dict[str, Any]]:
-        """Process a message and yield normalized records.
-
-        This is the main processing method. It should:
-        1. Parse the message
-        2. Fetch data from the provider (if needed)
-        3. Normalize the data
-        4. Yield normalized records for production to ingestion.data
+        message: dict[str, Any],
+        connection_config: dict[str, Any],
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Process a message and yield output records.
 
         Args:
-            message: The Kafka message value
-            connection_config: Configuration for the connection (credentials, settings)
+            message: The input message
+            connection_config: Connection configuration including credentials
 
         Yields:
-            Normalized records ready for ingestion.data topic
-
-        Raises:
-            RetriableError: For temporary failures that should be retried
-            TerminalError: For permanent failures that should go to DLQ
+            Records for integrations-incoming-records topic
         """
-        pass
+        ...
 
-    @abstractmethod
     def generate_idempotency_key(
         self,
         connection_id: str,
@@ -120,220 +104,65 @@ class BaseIntegrationHandler(ABC):
     ) -> str:
         """Generate a deterministic idempotency key.
 
-        Pattern: {provider}:{connection_id}:{resource_type}:{resource_id}
+        Pattern: google-drive:{connection_id}:{resource_type}:{resource_id}
 
         Args:
-            connection_id: The integration connection ID
-            resource_type: Type of resource (e.g., "file", "folder")
-            resource_id: Unique ID of the resource
+            connection_id: Integration connection ID
+            resource_type: Type of resource (file, folder, permission, revision)
+            resource_id: Provider's unique ID for the resource
 
         Returns:
             Deterministic idempotency key
         """
-        pass
+        return f"{self.PROVIDER}:{connection_id}:{resource_type}:{resource_id}"
 
-    async def fetch_connection_config(
-        self,
-        connection_id: str,
-    ) -> Dict[str, Any]:
-        """Fetch connection configuration from Control Plane.
+    # =========================================================================
+    # JSON-RPC 2.0 message parsing helpers
+    # =========================================================================
 
-        This is a common method that can be overridden if needed.
-
-        Args:
-            connection_id: The integration connection ID
-
-        Returns:
-            Connection configuration including credentials
-        """
-        # TODO: In production, this would call the Control Plane API
-        self.logger.info(
-            "[PLACEHOLDER] Fetching connection config",
-            connection_id=connection_id,
-        )
-        return {
-            "connection_id": connection_id,
-            "access_token": "placeholder_access_token",
-            "refresh_token": "placeholder_refresh_token",
-            "client_id": "placeholder_client_id",
-            "client_secret": "placeholder_client_secret",
-            "settings": {
-                "sync_files": True,
-                "sync_folders": True,
-                "sync_shared_drives": True,
-                "sync_permissions": False,
-            },
-        }
-
-    async def create_ingestion_envelope(
-        self,
-        message_id: str,
-        customer_id: str,
-        connection_id: str,
-        resource_type: str,
-        resource_id: str,
-        data: Dict[str, Any],
-        metadata: Optional[Dict[str, Any]] = None,
-        content: Optional[bytes] = None,
-    ) -> Dict[str, Any]:
-        """Create an ingestion data envelope with S3 offloading for large payloads.
-
-        This follows the schema defined in docs/04-message-schemas.md
+    def is_jsonrpc_request(self, message: dict[str, Any]) -> bool:
+        """Check if the message is a JSON-RPC 2.0 request.
 
         Args:
-            message_id: Unique message ID (UUID v4)
-            customer_id: Customer identifier
-            connection_id: Integration connection ID
-            resource_type: Type of resource
-            resource_id: Resource identifier
-            data: The normalized data
-            metadata: Optional metadata
-            content: Optional binary content (for exported files)
+            message: The incoming message dict
 
         Returns:
-            Complete envelope for ingestion.data topic
+            True if JSON-RPC 2.0 format, False otherwise
         """
-        now = datetime.utcnow().isoformat() + "Z"
-        idempotency_key = self.generate_idempotency_key(
-            connection_id,
-            resource_type,
-            resource_id,
-        )
+        return message.get("jsonrpc") == "2.0" and "method" in message
 
-        # Add default metadata fields
-        default_metadata = {
-            "source_format": f"{self.integration_id}_api",
-            "transformation_version": "1.0.0",
-        }
-
-        if metadata:
-            default_metadata.update(metadata)
-
-        # Create base envelope
-        envelope = {
-            "message_id": message_id,
-            "customer_id": customer_id,
-            "integration_id": self.integration_id,
-            "integration_connection_id": connection_id,
-            "provider": self.integration_id,
-            "resource_type": resource_type,
-            "resource_id": resource_id,
-            "created_at": now,
-            "idempotency_key": idempotency_key,
-            "metadata": default_metadata,
-        }
-
-        # Handle content if provided (binary file content)
-        if content:
-            content_size = len(content)
-            self.logger.info(
-                "Binary content provided, offloading to S3",
-                content_size_bytes=content_size,
-                resource_type=resource_type,
-                resource_id=resource_id,
-            )
-
-            # Calculate checksum for content
-            content_checksum = hashlib.sha256(content).hexdigest()
-
-            # Upload content to S3
-            content_s3_key = f"content/{customer_id}/{connection_id}/{message_id}"
-            content_s3_url = await self.s3_client.upload(
-                key=content_s3_key,
-                data=content,
-                content_type="application/octet-stream",
-                metadata={
-                    "customer_id": customer_id,
-                    "connection_id": connection_id,
-                    "resource_type": resource_type,
-                    "resource_id": resource_id,
-                    "sha256": content_checksum,
-                },
-            )
-
-            # Add content reference to envelope
-            envelope["content_s3_url"] = content_s3_url
-            envelope["metadata"]["content_size_bytes"] = content_size
-            envelope["metadata"]["content_sha256"] = content_checksum
-        else:
-            envelope["content_s3_url"] = None
-
-        # Check payload size for S3 offloading
-        data_bytes = json.dumps(data).encode("utf-8")
-        data_size = len(data_bytes)
-
-        # Check size threshold (256 KB)
-        if data_size > settings.worker.s3_payload_threshold_bytes:
-            self.logger.info(
-                "Payload exceeds threshold, offloading to S3",
-                size_bytes=data_size,
-                threshold_bytes=settings.worker.s3_payload_threshold_bytes,
-                resource_type=resource_type,
-                resource_id=resource_id,
-            )
-
-            # Calculate checksum
-            checksum = hashlib.sha256(data_bytes).hexdigest()
-
-            # Upload to S3
-            s3_key = f"payloads/{customer_id}/{connection_id}/{message_id}.json"
-            s3_url = await self.s3_client.upload(
-                key=s3_key,
-                data=data_bytes,
-                content_type="application/json",
-                metadata={
-                    "customer_id": customer_id,
-                    "connection_id": connection_id,
-                    "resource_type": resource_type,
-                    "resource_id": resource_id,
-                    "sha256": checksum,
-                },
-            )
-
-            # Set envelope with S3 reference
-            envelope["data"] = None
-            envelope["s3_url"] = s3_url
-            envelope["metadata"]["payload_size_bytes"] = data_size
-            envelope["metadata"]["sha256"] = checksum
-
-        else:
-            # Inline payload
-            envelope["data"] = data
-            envelope["s3_url"] = None
-
-        return envelope
-
-    async def handle_error(
-        self,
-        error: Exception,
-        message: Dict[str, Any],
-        connection_id: str,
-    ) -> Dict[str, Any]:
-        """Handle and format errors for the integration.errors topic.
+    def extract_params(self, message: dict[str, Any]) -> dict[str, Any]:
+        """Extract params from JSON-RPC 2.0 message or return message for legacy format.
 
         Args:
-            error: The exception that occurred
-            message: The original message being processed
-            connection_id: The connection ID
+            message: The incoming message dict
 
         Returns:
-            Error envelope for integration.errors topic
+            Params dict (from JSON-RPC params field or the message itself)
         """
-        error_details = {
-            "error_type": type(error).__name__,
-            "error_message": str(error),
-            "connection_id": connection_id,
-            "original_message": message,
-        }
+        if self.is_jsonrpc_request(message):
+            return message.get("params", {})
+        return message
 
-        if isinstance(error, IntegrationError):
-            error_details.update(error.to_dict())
+    def extract_header_params(self, message: dict[str, Any]) -> dict[str, Any]:
+        """Extract header parameters from JSON-RPC 2.0 message.
 
-        return {
-            "message_id": message.get("message_id", "unknown"),
-            "customer_id": message.get("customer_id", "unknown"),
-            "integration_id": self.integration_id,
-            "integration_connection_id": connection_id,
-            "error": error_details,
-            "occurred_at": datetime.utcnow().isoformat() + "Z",
-        }
+        Args:
+            message: The incoming message dict
+
+        Returns:
+            Header parameters dict
+        """
+        params = self.extract_params(message)
+        header = params.get("header", {})
+        return header.get("parameters", {})
+
+    # NOTE: fetch_connection_config() is inherited from ToolkitBaseActionHandler
+    # It fetches OAuth credentials from Control Plane using M2M authentication.
+    # See: clustera_integration_toolkit.handlers.base.BaseActionHandler
+
+    # NOTE: create_response_envelope() is inherited from ToolkitBaseActionHandler
+    # It automatically includes DATAPLANE_M2M_TOKEN for authentication
+
+    # NOTE: create_simplified_response() and create_error_response() are also
+    # inherited from ToolkitBaseActionHandler for standardized response building

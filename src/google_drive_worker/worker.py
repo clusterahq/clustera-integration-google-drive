@@ -31,11 +31,16 @@ from clustera_integration_toolkit.kafka import (
     KafkaConfig,
     KafkaMessage,
 )
-from clustera_integration_toolkit.message import IncomingMessageBuilder
+from clustera_integration_toolkit.message import IncomingMessageBuilder, ErrorMessageBuilder
+from clustera_integration_toolkit import topics
 
 from .config import Settings
-from .handlers.trigger import GoogleDriveTriggerHandler
+from .handlers.init import InitHandler
+from .handlers.fetch import FetchHandler
+from .handlers.write import WriteHandler
+from .handlers.teardown import TeardownHandler
 from .handlers.webhook import GoogleDriveWebhookHandler
+from .handlers.capability import GoogleDriveCapabilityHandler
 from .utils.errors import (
     IntegrationError,
     RetriableError,
@@ -50,16 +55,23 @@ class GoogleDriveWorker:
     Manages Kafka consumption, message processing, and production.
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, provider_name: Optional[str] = None):
         """Initialize the worker.
 
         Args:
             settings: Application settings
+            provider_name: Provider name (optional, default None)
         """
         self.settings = settings
         self.logger = self._setup_logger()
         self.running = False
         self.shutdown_event = asyncio.Event()
+        self.provider_name = provider_name or "google-drive"
+
+        # Topic names from registry (respects ENVIRONMENT prefix)
+        self.command_topic = topics.worker_topic("google-drive")
+        self.output_topic = topics.outbound_data
+        self.error_topic = topics.errors
 
         # Kafka clients (initialized in start)
         self.consumer: Optional[KafkaConsumer] = None
@@ -71,15 +83,24 @@ class GoogleDriveWorker:
             ttl_seconds=settings.worker.idempotency_cache_ttl_seconds,
         )
 
-        # Handlers
-        self.trigger_handler = GoogleDriveTriggerHandler(
-            api_config=settings.google_drive,
-            logger=self.logger,
-        )
-        self.webhook_handler = GoogleDriveWebhookHandler(
-            api_config=settings.google_drive,
-            logger=self.logger,
-        )
+        # Handlers (5-handler pattern)
+        self.handlers = [
+            InitHandler(settings.google_drive),
+            FetchHandler(
+                settings.google_drive,
+                storage_config=settings.storage,
+            ),
+            WriteHandler(settings.google_drive),
+            TeardownHandler(settings.google_drive),
+            GoogleDriveWebhookHandler(
+                settings.google_drive,
+                storage_config=settings.storage,
+                provider_name=provider_name,
+            ),
+        ]
+
+        # Capability handler (processes method-based routing, not action-based)
+        self.capability_handler = GoogleDriveCapabilityHandler(settings.google_drive)
 
         # Concurrency control
         self.active_connections: Set[str] = set()
@@ -141,8 +162,14 @@ class GoogleDriveWorker:
         )
 
     async def start(self) -> None:
-        """Start the worker and begin processing messages."""
+        """Start the worker and begin consuming messages."""
         self.logger.info("Starting Google Drive worker")
+
+        await self._init_kafka_clients()
+
+        # Publish capability manifest to S3 on startup
+        await self._publish_capabilities()
+
         self.running = True
 
         # Setup signal handlers
@@ -150,9 +177,6 @@ class GoogleDriveWorker:
             signal.signal(sig, self._handle_shutdown_signal)
 
         try:
-            # Initialize Kafka clients
-            await self._init_kafka_clients()
-
             # Start consumer
             await self.consumer.start()
             self.logger.info("Kafka consumer started")
@@ -206,24 +230,80 @@ class GoogleDriveWorker:
             auto_offset_reset=self.settings.kafka.auto_offset_reset,
         )
 
-        # Topics to subscribe to
-        topics = [
-            "integration.trigger",  # Polling triggers from Control Plane
-            "webhook.raw",  # Push notifications from Google Drive
-        ]
-
         # Initialize consumer
         self.consumer = KafkaConsumer(
             config=kafka_config,
-            topics=topics,
-            client_id=f"{self.settings.service_name}-consumer",
+            topics=[self.command_topic],
+            client_id="google-drive-worker-consumer",
         )
 
         # Initialize producer
         self.producer = KafkaProducer(
             config=kafka_config,
-            client_id=f"{self.settings.service_name}-producer",
+            client_id="google-drive-worker-producer",
         )
+
+    async def _publish_capabilities(self) -> None:
+        """Publish capability manifest to S3 on startup.
+
+        If S3 is not configured or in mock mode, this is a no-op.
+        Errors during publishing are logged but do not fail startup.
+        """
+        # Skip if in mock mode
+        if self.settings.google_drive.mock_mode or self.settings.storage.mock_mode:
+            self.logger.info("[MOCK] Skipping capability manifest publishing")
+            return
+
+        # Check if S3 is configured (requires AWS credentials or endpoint)
+        import os
+        s3_configured = bool(
+            os.getenv("S3_BUCKET")
+            and (os.getenv("S3_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID"))
+        )
+
+        if not s3_configured:
+            self.logger.info(
+                "S3 not configured, skipping capability manifest publishing",
+                hint="Set S3_BUCKET and S3_ACCESS_KEY_ID to enable",
+            )
+            return
+
+        try:
+            from clustera_integration_toolkit.capability import CapabilityPublisher
+            from clustera_integration_toolkit.storage import (
+                ObjectStorageClient,
+                ObjectStorageConfig,
+            )
+
+            # Initialize S3 client using standard S3_* env vars
+            config = ObjectStorageConfig.from_env()
+            s3_client = ObjectStorageClient(config)
+
+            # Initialize publisher with _meta/capabilities prefix
+            publisher = CapabilityPublisher(
+                s3_client=s3_client,
+                bucket=config.bucket,
+                prefix="_meta/capabilities",
+            )
+
+            # Get manifest and publish
+            manifest = self.capability_handler.get_capability_manifest()
+            result = await publisher.publish(manifest)
+
+            self.logger.info(
+                "Capability manifest published to S3",
+                s3_key=result["s3_key"],
+                provider=result["provider"],
+                version=result["version"],
+                size_bytes=result["size_bytes"],
+            )
+
+        except Exception as e:
+            self.logger.warning(
+                "Failed to publish capability manifest to S3",
+                error=str(e),
+                hint="Worker will continue without S3 publishing",
+            )
 
     async def _process_messages(self) -> None:
         """Main message processing loop."""
@@ -255,6 +335,27 @@ class GoogleDriveWorker:
                 )
                 await asyncio.sleep(1)  # Backoff on error
 
+    def _extract_connection_id(self, message: dict[str, Any]) -> str:
+        """Extract connection ID from JSON-RPC header or message root.
+
+        Args:
+            message: The message payload
+
+        Returns:
+            Connection ID string
+        """
+        # JSON-RPC 2.0 format: params.header.parameters.integration_connection_id
+        if message.get("jsonrpc") == "2.0":
+            params = message.get("params", {})
+            header = params.get("header", {})
+            header_params = header.get("parameters", {})
+            conn_id = header_params.get("integration_connection_id")
+            if conn_id:
+                return conn_id
+
+        # Legacy format: message root
+        return message.get("integration_connection_id", "unknown")
+
     async def _process_single_message(self, message: KafkaMessage) -> None:
         """Process a single Kafka message.
 
@@ -266,8 +367,8 @@ class GoogleDriveWorker:
         value = message.value
         headers = message.headers
 
-        # Extract connection ID for concurrency control
-        connection_id = value.get("integration_connection_id", "unknown")
+        # Extract connection ID using helper (supports JSON-RPC 2.0 and legacy)
+        connection_id = self._extract_connection_id(value)
 
         # Check if we should process this message
         integration_id = value.get("integration_id")
@@ -345,43 +446,93 @@ class GoogleDriveWorker:
         headers: Dict[str, Any],
         connection_id: str,
     ) -> None:
-        """Handle a message based on its topic.
+        """Handle a message based on its method/action.
+
+        Routing priority:
+        1. JSON-RPC 2.0 method field (for all JSON-RPC requests)
+        2. Legacy action field (for backward compatibility)
 
         Args:
-            topic: Kafka topic name
+            topic: Kafka topic name (for logging)
             key: Message key (connection_id)
             value: Message value
             headers: Message headers
             connection_id: Integration connection ID
         """
         start_time = time.time()
+
+        # Extract routing fields
+        action = value.get("action", "unknown")
+        method = value.get("method")
+        is_jsonrpc = value.get("jsonrpc") == "2.0"
+
         self.logger.info(
             "Handling message",
             topic=topic,
+            action=action,
+            method=method,
+            message_id=value.get("message_id") or value.get("id"),
             connection_id=connection_id,
-            message_id=value.get("message_id"),
+            jsonrpc_format=is_jsonrpc,
         )
 
-        try:
-            # Select handler based on topic
-            if topic == "integration.trigger":
-                handler = self.trigger_handler
-            elif topic == "webhook.raw":
-                handler = self.webhook_handler
-            else:
-                raise TerminalError(f"Unknown topic: {topic}")
+        # Handle capability discovery requests (JSON-RPC method-based)
+        if method == "clustera.integration.capability.describe":
+            try:
+                response = await self.capability_handler.handle_capability_request(value)
+                await self._produce_capability_response(response, connection_id)
+                self.metrics["messages_processed"] += 1
+                return
+            except Exception as e:
+                self.logger.error(
+                    "Capability request failed",
+                    error=str(e),
+                    connection_id=connection_id,
+                )
+                error_response = self.capability_handler.build_error_response(
+                    value,
+                    code=-32603,
+                    error_message="Internal error",
+                    details=str(e),
+                )
+                await self._produce_capability_response(error_response, connection_id)
+                return
 
-            # Check if handler can process
-            if not await handler.can_handle(value):
+        try:
+            # Handle "pending_lookup" case for webhooks that don't have connection_id
+            if connection_id == "pending_lookup":
                 self.logger.info(
-                    "Handler cannot process message",
-                    handler=handler.__class__.__name__,
+                    "Connection ID is pending_lookup, handler must resolve from payload",
+                    method=method,
+                    action=action,
+                )
+                connection_config: Dict[str, Any] = {}
+            else:
+                # Fetch connection configuration from Control Plane
+                # TODO: Implement actual Control Plane call
+                connection_config = {
+                    "connection_id": connection_id,
+                    "access_token": "placeholder_access_token",
+                }
+
+            # Route to handler based on method (JSON-RPC) or action (legacy)
+            handler = None
+
+            for h in self.handlers:
+                if await h.can_handle(value):
+                    handler = h
+                    break
+
+            if not handler:
+                self.logger.warning(
+                    "No handler for message",
+                    topic=topic,
+                    action=action,
+                    method=method,
+                    integration_id=value.get("integration_id"),
                 )
                 await self.consumer.commit()
                 return
-
-            # Fetch connection configuration
-            connection_config = await handler.fetch_connection_config(connection_id)
 
             # Process with retries
             record_count = await self._process_with_retry(
@@ -441,6 +592,33 @@ class GoogleDriveWorker:
             if start_time:
                 duration = time.time() - start_time
                 self.metrics["processing_time_seconds"] += duration
+
+    async def _produce_capability_response(
+        self,
+        response: Dict[str, Any],
+        connection_id: str,
+    ) -> None:
+        """Produce capability response to integrations-incoming-records.
+
+        Args:
+            response: JSON-RPC 2.0 response payload
+            connection_id: Integration connection ID (for partition key)
+        """
+        topic = self.output_topic
+        key = connection_id
+
+        await self.producer.send(
+            topic=topic,
+            key=key,
+            value=response,
+        )
+
+        self.logger.info(
+            "Capability response produced",
+            topic=topic,
+            key=key,
+            response_id=response.get("id"),
+        )
 
     async def _produce_record(
         self,
@@ -531,7 +709,7 @@ class GoogleDriveWorker:
         connection_id: str,
         retriable: Optional[bool] = None,
     ) -> None:
-        """Produce error to integration.errors topic or DLQ.
+        """Produce error to integration.errors topic using ErrorMessageBuilder.
 
         Args:
             error: The error that occurred
@@ -543,40 +721,44 @@ class GoogleDriveWorker:
         if retriable is None:
             retriable = isinstance(error, RetriableError)
 
-        # Use DLQ for terminal errors, regular errors for retriable
-        topic = "integration.errors" if retriable else "integration.errors.dlq"
-
-        error_record = {
-            "message_id": original_message.get("message_id", "unknown"),
-            "customer_id": original_message.get("customer_id", "unknown"),
-            "integration_id": self.settings.worker.integration_id,
-            "integration_connection_id": connection_id,
-            "error": {
-                "type": type(error).__name__,
-                "message": str(error),
-                "retriable": retriable,
-            },
-            "original_message": original_message,
-            "occurred_at": datetime.utcnow().isoformat() + "Z",
-        }
-
+        # Extract error details from IntegrationError
+        error_category = "unknown"
+        error_details = {}
         if isinstance(error, IntegrationError):
-            error_record["error"].update(error.to_dict())
+            error_category = error.category
+            error_details = error.details
+
+        # Build error message using ErrorMessageBuilder
+        error_message = ErrorMessageBuilder.build(
+            customer_id=original_message.get("customer_id", "unknown"),
+            integration_provider_name=self.provider_name,
+            integration_connection_id=connection_id,
+            error_type=type(error).__name__,
+            error_message=str(error),
+            error_category=error_category,
+            retriable=retriable,
+            original_message=original_message,
+            error_details=error_details,
+        )
+
+        # Use error topic (toolkit/dataplane will handle DLQ routing)
+        topic = self.error_topic
 
         # Partition key is provider_name for error topic (enables provider-specific monitoring)
         await self.producer.send(
             topic=topic,
-            key="google-drive",
-            value=error_record,
+            key=self.provider_name,
+            value=error_message,
         )
 
         self.logger.info(
             "message_produced_to_kafka",
             topic=topic,
-            key="google-drive",
+            key=self.provider_name,
             record_type="error",
             error_type=type(error).__name__,
-            message_id=error_record.get("message_id"),
+            error_category=error_category,
+            message_id=original_message.get("message_id", "unknown"),
             retriable=retriable
         )
 
