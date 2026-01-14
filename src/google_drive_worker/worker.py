@@ -100,7 +100,7 @@ class GoogleDriveWorker:
         ]
 
         # Capability handler (processes method-based routing, not action-based)
-        self.capability_handler = GoogleDriveCapabilityHandler(settings.google_drive)
+        self.capability_handler = GoogleDriveCapabilityHandler()
 
         # Concurrency control
         self.active_connections: Set[str] = set()
