@@ -263,12 +263,14 @@ class FetchHandler(BaseActionHandler):
 
         start_time = datetime.now(UTC)
 
-        # Initialize Google Drive API client with OAuth credentials from connection_config
+        # Initialize Google Drive API client
+        # - access_token/refresh_token: per-user credentials from connection_config
+        # - client_id/client_secret: OAuth app credentials from worker config (env vars)
         api_client = GoogleDriveAPIClient(
             access_token=connection_config.get("access_token"),
             refresh_token=connection_config.get("refresh_token"),
-            client_id=connection_config.get("client_id"),
-            client_secret=connection_config.get("client_secret"),
+            client_id=self.api_config.client_id,
+            client_secret=self.api_config.client_secret,
         )
 
         try:

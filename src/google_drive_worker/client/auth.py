@@ -111,7 +111,7 @@ class GoogleOAuthClient:
 
                 raise AuthenticationError(
                     f"Token refresh failed: {error_msg}",
-                    requires_reauth=True,
+                    details={"requires_reauth": True},
                 )
 
             elif response.status_code in [429, 503]:
@@ -147,7 +147,7 @@ class GoogleOAuthClient:
                 else:
                     raise AuthenticationError(
                         f"Token refresh failed with status {response.status_code}",
-                        requires_reauth=True,
+                        details={"requires_reauth": True, "status_code": response.status_code},
                     )
 
         except httpx.NetworkError as e:

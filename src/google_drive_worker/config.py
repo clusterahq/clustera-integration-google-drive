@@ -90,6 +90,16 @@ class GoogleDriveAPIConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="GDRIVE_")
 
+    # OAuth application credentials (from Google Cloud Console)
+    client_id: Optional[str] = Field(
+        default=None,
+        description="OAuth 2.0 Client ID from Google Cloud Console",
+    )
+    client_secret: Optional[str] = Field(
+        default=None,
+        description="OAuth 2.0 Client Secret from Google Cloud Console",
+    )
+
     api_base_url: str = Field(
         default="https://www.googleapis.com/drive/v3",
         description="Google Drive API v3 base URL",
