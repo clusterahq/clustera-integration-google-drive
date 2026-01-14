@@ -121,11 +121,11 @@ class GoogleDriveAPIClient:
             TerminalError: For permanent failures
         """
         logger.info(
-            "Listing files from Google Drive: page_size=%s, has_page_token=%s",
-            page_size, bool(page_token,
-        ),
-            query=query,
-            include_shared_drives=include_shared_drives,
+            "Listing files from Google Drive: page_size=%s, has_page_token=%s, query=%s, include_shared_drives=%s",
+            page_size,
+            bool(page_token),
+            query,
+            include_shared_drives,
         )
 
         params = {
@@ -155,9 +155,9 @@ class GoogleDriveAPIClient:
         response = await self._make_request("GET", url, params=params)
 
         logger.info(
-            "Successfully listed files",
-            file_count=len(response.get("files", [])),
-            has_next_page=bool(response.get("nextPageToken")),
+            "Successfully listed files: file_count=%s, has_next_page=%s",
+            len(response.get("files", [])),
+            bool(response.get("nextPageToken")),
         )
 
         return response
@@ -198,10 +198,10 @@ class GoogleDriveAPIClient:
         response = await self._make_request("GET", url, params=params)
 
         logger.info(
-            "Successfully retrieved file metadata: file_id=%s, mime_type=%s",
-            file_id, response.get("mimeType",
-        ),
-            size=response.get("size"),
+            "Successfully retrieved file metadata: file_id=%s, mime_type=%s, size=%s",
+            file_id,
+            response.get("mimeType"),
+            response.get("size"),
         )
 
         return response
@@ -243,8 +243,8 @@ class GoogleDriveAPIClient:
 
         logger.info(
             "Successfully exported file: file_id=%s, size_bytes=%s",
-            file_id, len(response,
-        ) if isinstance(response, bytes) else 0,
+            file_id,
+            len(response) if isinstance(response, bytes) else 0,
         )
 
         return response
@@ -273,11 +273,10 @@ class GoogleDriveAPIClient:
             TerminalError: For permanent failures
         """
         logger.info(
-            "Listing changes from Google Drive: page_token=%s",
-            page_token[:20] + "..." if len(page_token,
-        ) > 20 else page_token,
-            page_size=page_size,
-            include_shared_drives=include_shared_drives,
+            "Listing changes from Google Drive: page_token=%s, page_size=%s, include_shared_drives=%s",
+            page_token[:20] + "..." if len(page_token) > 20 else page_token,
+            page_size,
+            include_shared_drives,
         )
 
         params = {
@@ -292,10 +291,10 @@ class GoogleDriveAPIClient:
         response = await self._make_request("GET", url, params=params)
 
         logger.info(
-            "Successfully listed changes",
-            change_count=len(response.get("changes", [])),
-            has_next_page=bool(response.get("nextPageToken")),
-            new_start_token=bool(response.get("newStartPageToken")),
+            "Successfully listed changes: change_count=%s, has_next_page=%s, new_start_token=%s",
+            len(response.get("changes", [])),
+            bool(response.get("nextPageToken")),
+            bool(response.get("newStartPageToken")),
         )
 
         return response
@@ -333,8 +332,7 @@ class GoogleDriveAPIClient:
 
         logger.info(
             "Successfully retrieved start page token: token_preview=%s",
-            start_token[:20] + "..." if len(start_token,
-        ) > 20 else start_token,
+            start_token[:20] + "..." if len(start_token) > 20 else start_token,
         )
 
         return start_token
@@ -375,8 +373,8 @@ class GoogleDriveAPIClient:
 
         logger.info(
             "Successfully listed revisions: file_id=%s, revision_count=%s",
-            file_id, len(revisions,
-        ),
+            file_id,
+            len(revisions),
         )
 
         return revisions
@@ -416,15 +414,15 @@ class GoogleDriveAPIClient:
         params = {"fields": fields}
 
         logger.debug(
-            "Fetching Drive about info",
-            fields=fields,
+            "Fetching Drive about info: fields=%s",
+            fields,
         )
 
         response = await self._make_request("GET", url, params=params)
 
         logger.info(
-            "Successfully fetched Drive about info",
-            email=response.get("user", {}).get("emailAddress"),
+            "Successfully fetched Drive about info: email=%s",
+            response.get("user", {}).get("emailAddress"),
         )
 
         return response
@@ -489,10 +487,10 @@ class GoogleDriveAPIClient:
         }
 
         logger.info(
-            "Creating Google Drive notification channel",
-            channel_id=channel_id,
-            webhook_url=webhook_url,
-            expiration=expiration,
+            "Creating Google Drive notification channel: channel_id=%s, webhook_url=%s, expiration=%s",
+            channel_id,
+            webhook_url,
+            expiration,
         )
 
         response = await self._make_request(
@@ -503,10 +501,10 @@ class GoogleDriveAPIClient:
         )
 
         logger.info(
-            "Successfully created notification channel",
-            channel_id=response.get("id"),
-            resource_id=response.get("resourceId"),
-            expiration=response.get("expiration"),
+            "Successfully created notification channel: channel_id=%s, resource_id=%s, expiration=%s",
+            response.get("id"),
+            response.get("resourceId"),
+            response.get("expiration"),
         )
 
         return response
@@ -537,9 +535,9 @@ class GoogleDriveAPIClient:
         }
 
         logger.info(
-            "Stopping Google Drive notification channel",
-            channel_id=channel_id,
-            resource_id=resource_id,
+            "Stopping Google Drive notification channel: channel_id=%s, resource_id=%s",
+            channel_id,
+            resource_id,
         )
 
         await self._make_request(
@@ -549,8 +547,8 @@ class GoogleDriveAPIClient:
         )
 
         logger.info(
-            "Successfully stopped notification channel",
-            channel_id=channel_id,
+            "Successfully stopped notification channel: channel_id=%s",
+            channel_id,
         )
 
     async def _make_request(
@@ -598,9 +596,10 @@ class GoogleDriveAPIClient:
             if response.status_code == 429:
                 retry_after = response.headers.get("Retry-After", "60")
                 logger.warning(
-            "Google Drive API rate limit exceeded: retry_after=%s, url=%s",
-            retry_after, url,
-        )
+                    "Google Drive API rate limit exceeded: retry_after=%s, url=%s",
+                    retry_after,
+                    url,
+                )
                 raise RateLimitError(
                     "Rate limit exceeded",
                     retry_after=int(retry_after) if str(retry_after).isdigit() else 60,
@@ -647,9 +646,11 @@ class GoogleDriveAPIClient:
             # Handle server errors (5xx)
             if 500 <= response.status_code < 600:
                 logger.error(
-            "Google Drive API server error: status_code=%s, url=%s, response_text=%s",
-            response.status_code, url, response.text[:500] if response.text else None,
-        )
+                    "Google Drive API server error: status_code=%s, url=%s, response_text=%s",
+                    response.status_code,
+                    url,
+                    response.text[:500] if response.text else None,
+                )
                 raise RetriableError(
                     f"Google API error: {response.status_code}",
                     details={"status_code": response.status_code},
@@ -659,9 +660,11 @@ class GoogleDriveAPIClient:
             if 400 <= response.status_code < 500:
                 error_detail = self._parse_error_response(response)
                 logger.error(
-            "Google Drive API client error: status_code=%s, url=%s, error=%s",
-            response.status_code, url, error_detail,
-        )
+                    "Google Drive API client error: status_code=%s, url=%s, error=%s",
+                    response.status_code,
+                    url,
+                    error_detail,
+                )
                 raise TerminalError(
                     f"Client error: {response.status_code} - {error_detail.get('message', 'Unknown error')}"
                 )
@@ -676,9 +679,9 @@ class GoogleDriveAPIClient:
 
         except httpx.NetworkError as e:
             logger.error(
-            "Network error calling Google Drive API: url=%s, error=%s",
-            url, str(e,
-        ),
+                "Network error calling Google Drive API: url=%s, error=%s",
+                url,
+                str(e),
             )
             raise RetriableError(
                 "Network error calling Google Drive API",
@@ -686,9 +689,9 @@ class GoogleDriveAPIClient:
             )
         except httpx.TimeoutException as e:
             logger.error(
-            "Timeout calling Google Drive API: url=%s, error=%s",
-            url, str(e,
-        ),
+                "Timeout calling Google Drive API: url=%s, error=%s",
+                url,
+                str(e),
             )
             raise RetriableError(
                 "Request to Google Drive API timed out",
