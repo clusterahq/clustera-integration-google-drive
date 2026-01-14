@@ -51,6 +51,9 @@ class BaseActionHandler(ToolkitBaseActionHandler):
     # Override in subclass to specify which action(s) this handler processes
     SUPPORTED_ACTIONS: set[str] = set()
 
+    # Override in subclass to specify which JSON-RPC method(s) this handler processes
+    SUPPORTED_METHODS: set[str] = set()
+
     def __init__(self, api_config: Any = None) -> None:
         """Initialize handler.
 
@@ -65,7 +68,9 @@ class BaseActionHandler(ToolkitBaseActionHandler):
     def can_handle(self, message: dict[str, Any]) -> bool:
         """Determine if this handler can process the given message.
 
-        Routes based on action field in the message.
+        Routes based on:
+        - JSON-RPC 2.0: method field and params.header.parameters.integration_provider_name
+        - Legacy: action field and integration_id
 
         Args:
             message: The message payload
@@ -73,6 +78,22 @@ class BaseActionHandler(ToolkitBaseActionHandler):
         Returns:
             True if this handler should process the message
         """
+        # JSON-RPC 2.0 format: check method and provider name
+        if message.get("jsonrpc") == "2.0" and "method" in message:
+            method = message.get("method")
+            # Extract provider from JSON-RPC header
+            params = message.get("params", {})
+            header = params.get("header", {})
+            header_params = header.get("parameters", {})
+            provider_name = header_params.get("integration_provider_name")
+
+            # Must be for this provider (or provider not specified in message)
+            if provider_name and provider_name != self.PROVIDER:
+                return False
+
+            return method in self.SUPPORTED_METHODS
+
+        # Legacy format: check action and integration_id
         action = message.get("action")
         integration_id = message.get("integration_id")
 
