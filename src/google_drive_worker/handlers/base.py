@@ -51,12 +51,15 @@ class BaseActionHandler(ToolkitBaseActionHandler):
     # Override in subclass to specify which action(s) this handler processes
     SUPPORTED_ACTIONS: set[str] = set()
 
-    def __init__(self) -> None:
+    def __init__(self, api_config: Any = None) -> None:
         """Initialize handler.
 
-        Note: Subclasses may pass additional config (e.g., api_config) if needed.
+        Args:
+            api_config: Optional Google Drive API configuration. Stored as self.api_config
+                       for use by subclasses.
         """
         super().__init__()  # Initialize toolkit base (Control Plane client, etc.)
+        self.api_config = api_config
         self.logger = structlog.get_logger().bind(handler=self.__class__.__name__)
 
     def can_handle(self, message: dict[str, Any]) -> bool:
