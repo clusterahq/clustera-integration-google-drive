@@ -91,12 +91,15 @@ class GoogleDriveAPIConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GDRIVE_")
 
     # OAuth application credentials (from Google Cloud Console)
+    # Uses GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET env vars
     client_id: Optional[str] = Field(
         default=None,
+        validation_alias="GOOGLE_OAUTH_CLIENT_ID",
         description="OAuth 2.0 Client ID from Google Cloud Console",
     )
     client_secret: Optional[str] = Field(
         default=None,
+        validation_alias="GOOGLE_OAUTH_CLIENT_SECRET",
         description="OAuth 2.0 Client Secret from Google Cloud Console",
     )
 
