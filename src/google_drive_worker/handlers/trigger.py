@@ -13,6 +13,10 @@ from .base import BaseIntegrationHandler
 from ..client.drive_api import GoogleDriveAPIClient
 from ..config import GoogleDriveAPIConfig
 from ..utils.errors import ValidationError, RetriableError, TerminalError
+from clustera_integration_toolkit.control_plane import ControlPlaneClient, ControlPlaneError
+
+# State key for storing the last processed page token
+STATE_KEY_PAGE_TOKEN = "google_drive_page_token"
 
 
 class GoogleDriveTriggerHandler(BaseIntegrationHandler):
@@ -170,6 +174,15 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
                     if not is_folder and not sync_files:
                         continue
 
+                    # Fetch content for Google Workspace files
+                    file_content = None
+                    if not is_folder:
+                        file_content = await self._fetch_file_content(
+                            api_client=api_client,
+                            file_data=file_data,
+                            connection_id=connection_id,
+                        )
+
                     # Create normalized envelope
                     resource_type = "folder" if is_folder else "file"
 
@@ -180,10 +193,13 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
                         resource_type=resource_type,
                         resource_id=file_data["id"],
                         data=self._normalize_file(file_data),
+                        content=file_content,
                         metadata={
                             "trigger_type": "full_sync",
                             "source_format": "google_drive_api_v3",
                             "transformation_version": "1.0.0",
+                            "has_content": file_content is not None,
+                            "content_size_bytes": len(file_content) if file_content else 0,
                         },
                     )
 
@@ -235,8 +251,29 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
         Yields:
             Changed files/folders since last sync
         """
-        last_cursor = message.get("last_cursor", {})
-        page_token = last_cursor.get("page_token")
+        # Try to get page token from connection state first
+        page_token = None
+        try:
+            # Initialize Control Plane client
+            async with ControlPlaneClient() as cp_client:
+                state_value = await cp_client.get_connection_state(
+                    connection_id=connection_id,
+                    key=STATE_KEY_PAGE_TOKEN,
+                )
+                if state_value:
+                    page_token = state_value
+                    self.logger.info(
+                        "Retrieved page token from connection state",
+                        connection_id=connection_id,
+                        page_token_preview=page_token[:20] + "..." if len(page_token) > 20 else page_token,
+                    )
+        except Exception as e:
+            self.logger.debug(
+                "Could not retrieve page token from state (will fetch start token)",
+                connection_id=connection_id,
+                error=str(e),
+            )
+            page_token = None
 
         self.logger.info(
             "Processing incremental sync",
@@ -305,6 +342,15 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
                     if not is_folder and not sync_files:
                         continue
 
+                    # Fetch content for Google Workspace files
+                    file_content = None
+                    if not is_folder:
+                        file_content = await self._fetch_file_content(
+                            api_client=api_client,
+                            file_data=file_data,
+                            connection_id=connection_id,
+                        )
+
                     # Create normalized envelope
                     resource_type = "folder" if is_folder else "file"
 
@@ -315,11 +361,14 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
                         resource_type=resource_type,
                         resource_id=file_data["id"],
                         data=self._normalize_file(file_data),
+                        content=file_content,
                         metadata={
                             "trigger_type": "incremental",
                             "change_type": change.get("changeType", "file"),
                             "source_format": "google_drive_api_v3",
                             "transformation_version": "1.0.0",
+                            "has_content": file_content is not None,
+                            "content_size_bytes": len(file_content) if file_content else 0,
                         },
                     )
 
@@ -344,17 +393,110 @@ class GoogleDriveTriggerHandler(BaseIntegrationHandler):
         # Log the new start page token for next incremental sync
         if new_start_page_token:
             self.logger.info(
-                "Incremental sync completed - save this token for next sync",
+                "Incremental sync completed - page token will be saved to connection state",
                 connection_id=connection_id,
                 new_start_page_token=new_start_page_token[:20] + "..." if len(new_start_page_token) > 20 else new_start_page_token,
                 total_changes_processed=total_changes,
             )
+
+            # Save the new page token to connection state for next incremental sync
+            try:
+                async with ControlPlaneClient() as cp_client:
+                    await cp_client.upsert_connection_state(
+                        connection_id=connection_id,
+                        key=STATE_KEY_PAGE_TOKEN,
+                        value=new_start_page_token,
+                    )
+                self.logger.info(
+                    "Saved page token to connection state for next sync",
+                    connection_id=connection_id,
+                    page_token_preview=new_start_page_token[:20] + "..." if len(new_start_page_token) > 20 else new_start_page_token,
+                )
+            except ControlPlaneError as e:
+                # Non-fatal: next sync will restart from beginning
+                self.logger.warning(
+                    "Failed to save page token to connection state (non-fatal)",
+                    connection_id=connection_id,
+                    error=str(e),
+                )
         else:
             self.logger.info(
                 "Incremental sync completed",
                 connection_id=connection_id,
                 total_changes_processed=total_changes,
             )
+
+    async def _fetch_file_content(
+        self,
+        api_client: GoogleDriveAPIClient,
+        file_data: Dict[str, Any],
+        connection_id: str,
+    ) -> Optional[bytes]:
+        """Fetch file content for Google Workspace files that need export.
+
+        Args:
+            api_client: Google Drive API client
+            file_data: File metadata from API
+            connection_id: Integration connection ID
+
+        Returns:
+            Exported file content as bytes, or None if not exportable
+        """
+        from ..normalization.mime_types import needs_export, get_export_format
+
+        mime_type = file_data.get("mimeType")
+        file_id = file_data.get("id")
+
+        # Check if this file needs export (Google Workspace files)
+        if not needs_export(mime_type):
+            return None
+
+        # Get the export format
+        export_format = get_export_format(mime_type)
+        if not export_format:
+            self.logger.warning(
+                "File needs export but no export format found",
+                file_id=file_id,
+                mime_type=mime_type,
+                connection_id=connection_id,
+            )
+            return None
+
+        try:
+            self.logger.info(
+                "Exporting Google Workspace file",
+                file_id=file_id,
+                mime_type=mime_type,
+                export_format=export_format,
+                connection_id=connection_id,
+            )
+
+            # Export the file using the API
+            content = await api_client.export_file(
+                file_id=file_id,
+                mime_type=export_format,
+            )
+
+            self.logger.info(
+                "Successfully exported file",
+                file_id=file_id,
+                content_size_bytes=len(content),
+                connection_id=connection_id,
+            )
+
+            return content
+
+        except Exception as e:
+            self.logger.error(
+                "Failed to export file",
+                file_id=file_id,
+                mime_type=mime_type,
+                export_format=export_format,
+                error=str(e),
+                connection_id=connection_id,
+            )
+            # Non-fatal: we still have metadata
+            return None
 
     def _normalize_file(self, raw_file: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize Google Drive file to standard format.
