@@ -73,7 +73,7 @@ async def main() -> NoReturn:
         mock_mode=settings.google_drive.mock_mode,
     )
 
-    worker = GoogleDriveWorker(settings, logger, provider_name=provider_name)
+    worker = GoogleDriveWorker(settings, provider_name=provider_name)
 
     # Start health check server
     health_port = int(os.environ.get("HEALTH_PORT", "8080"))
