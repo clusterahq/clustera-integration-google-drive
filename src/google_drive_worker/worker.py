@@ -356,6 +356,27 @@ class GoogleDriveWorker:
         # Legacy format: message root
         return message.get("integration_connection_id", "unknown")
 
+    def _extract_integration_id(self, message: dict[str, Any]) -> str | None:
+        """Extract integration ID from JSON-RPC header or message root.
+
+        Args:
+            message: The message payload
+
+        Returns:
+            Integration ID string or None if not found
+        """
+        # JSON-RPC 2.0 format: params.header.parameters.integration_provider_name
+        if message.get("jsonrpc") == "2.0":
+            params = message.get("params", {})
+            header = params.get("header", {})
+            header_params = header.get("parameters", {})
+            provider_name = header_params.get("integration_provider_name")
+            if provider_name:
+                return provider_name
+
+        # Legacy format: message root
+        return message.get("integration_id")
+
     async def _process_single_message(self, message: KafkaMessage) -> None:
         """Process a single Kafka message.
 
@@ -370,10 +391,16 @@ class GoogleDriveWorker:
         # Extract connection ID using helper (supports JSON-RPC 2.0 and legacy)
         connection_id = self._extract_connection_id(value)
 
-        # Check if we should process this message
-        integration_id = value.get("integration_id")
-        if integration_id != self.settings.worker.integration_id:
-            # Not for us, skip
+        # Check if we should process this message (supports JSON-RPC 2.0 and legacy)
+        integration_id = self._extract_integration_id(value)
+        if integration_id and integration_id != self.settings.worker.integration_id:
+            # Not for us, skip with logging
+            self.logger.debug(
+                "Skipping message for different integration",
+                received_integration_id=integration_id,
+                expected_integration_id=self.settings.worker.integration_id,
+                connection_id=connection_id,
+            )
             await self.consumer.commit()
             return
 
