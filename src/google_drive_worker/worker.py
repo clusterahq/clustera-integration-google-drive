@@ -546,7 +546,7 @@ class GoogleDriveWorker:
             handler = None
 
             for h in self.handlers:
-                if await h.can_handle(value):
+                if h.can_handle(value):
                     handler = h
                     break
 
@@ -750,22 +750,29 @@ class GoogleDriveWorker:
 
         # Extract error details from IntegrationError
         error_category = "unknown"
-        error_details = {}
+        error_details: Dict[str, Any] = {}
         if isinstance(error, IntegrationError):
             error_category = error.category
             error_details = error.details
+
+        # Build context with error details
+        context: Dict[str, Any] = {
+            "error_category": error_category,
+            "exception_type": type(error).__name__,
+        }
+        if error_details:
+            context["error_details"] = error_details
 
         # Build error message using ErrorMessageBuilder
         error_message = ErrorMessageBuilder.build(
             customer_id=original_message.get("customer_id", "unknown"),
             integration_provider_name=self.provider_name,
             integration_connection_id=connection_id,
-            error_type=type(error).__name__,
+            error_type="retriable" if retriable else "terminal",
+            error_code=type(error).__name__.upper(),
             error_message=str(error),
-            error_category=error_category,
-            retriable=retriable,
-            original_message=original_message,
-            error_details=error_details,
+            source_message_id=original_message.get("message_id") or original_message.get("id"),
+            context=context,
         )
 
         # Use error topic (toolkit/dataplane will handle DLQ routing)
