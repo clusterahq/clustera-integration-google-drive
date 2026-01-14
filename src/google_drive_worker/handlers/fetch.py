@@ -261,26 +261,31 @@ class FetchHandler(BaseActionHandler):
             jsonrpc_format=is_jsonrpc,
         )
 
-        access_token = connection_config.get("access_token")
-        refresh_token = connection_config.get("refresh_token")
-
-        # TODO: Initialize Google Drive API client
-        # api_client = GoogleDriveAPIClient(
-        #     config=self.api_config,
-        #     access_token=access_token,
-        #     logger=self.logger,
-        #     refresh_token=refresh_token,
-        # )
-
         start_time = datetime.now(UTC)
+
+        # Initialize Google Drive API client with OAuth credentials from connection_config
+        api_client = GoogleDriveAPIClient(
+            access_token=connection_config.get("access_token"),
+            refresh_token=connection_config.get("refresh_token"),
+            client_id=connection_config.get("client_id"),
+            client_secret=connection_config.get("client_secret"),
+        )
 
         try:
             # Route to appropriate fetch method
             if resource_type == "files":
-                # TODO: Emit one content.ingest message per file
-                # async for response in self._fetch_files_record_submit(...):
-                #     yield response
-                pass
+                async for response in self._fetch_files_record_submit(
+                    api_client=api_client,
+                    connection_id=connection_id,
+                    customer_id=customer_id,
+                    connection_config=connection_config,
+                    filters=filters,
+                    pagination=pagination,
+                    options=options,
+                    start_time=start_time,
+                ):
+                    yield response
+                return
 
             elif resource_type == "file":
                 # TODO: Single file fetch
@@ -344,8 +349,7 @@ class FetchHandler(BaseActionHandler):
                 )
 
         finally:
-            # await api_client.close()
-            pass
+            await api_client.close()
 
         # Log warning for unimplemented resource types (all TODOs above)
         self.logger.warning(
@@ -437,7 +441,6 @@ class FetchHandler(BaseActionHandler):
             )
 
     # TODO: Implement fetch methods for each resource type
-    # - _fetch_files_record_submit (list files, emit content.ingest per file)
     # - _fetch_file (single file by ID, emit content.ingest)
     # - _fetch_folders (list folders, emit content.ingest per folder)
     # - _fetch_folder (single folder by ID, emit content.ingest)
@@ -447,3 +450,124 @@ class FetchHandler(BaseActionHandler):
     # - _fetch_revision (single revision by ID, emit incoming)
     # - _fetch_changes (incremental sync via Changes API, emit content.ingest/incoming)
     # - _fetch_about (user info and Drive metadata, emit incoming)
+
+    async def _fetch_files_record_submit(
+        self,
+        api_client: GoogleDriveAPIClient,
+        connection_id: str,
+        customer_id: str,
+        connection_config: dict[str, Any],
+        filters: FetchFilters,
+        pagination: FetchPagination,
+        options: FetchOptions,
+        start_time: datetime,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Fetch files and emit one content.ingest message per file.
+
+        This method handles the 'files' resource type, calling the Google Drive API
+        to list files and emitting a clustera.integration.content.ingest message
+        for each file found.
+
+        Args:
+            api_client: Initialized Google Drive API client
+            connection_id: Integration connection ID
+            customer_id: Customer ID
+            connection_config: Connection configuration with snowball_id
+            filters: Fetch filters (query, trashed, etc.)
+            pagination: Pagination parameters (page_token, max_results)
+            options: Fetch options
+            start_time: Operation start time for duration tracking
+
+        Yields:
+            clustera.integration.content.ingest message dict for each file
+        """
+        # Build query string from filters
+        query_parts = []
+        if filters.query:
+            query_parts.append(filters.query)
+        # Note: trashed filter is handled by include_trashed parameter below
+
+        query = " and ".join(query_parts) if query_parts else None
+
+        # Call Google Drive API
+        # filters.trashed defaults to False, meaning exclude trashed files
+        response = await api_client.list_files(
+            page_size=pagination.max_results,
+            page_token=pagination.page_token,
+            query=query,
+            include_trashed=filters.trashed or False,
+        )
+
+        files = response.get("files", [])
+        next_page_token = response.get("nextPageToken")
+
+        self.logger.info(
+            "Retrieved files from Google Drive",
+            connection_id=connection_id,
+            file_count=len(files),
+            has_next_page=bool(next_page_token),
+            page_token=pagination.page_token[:20] + "..." if pagination.page_token else None,
+        )
+
+        # Get snowball_id for content.ingest messages
+        snowball_id = connection_config.get("snowball_id")
+        if not snowball_id:
+            raise ValidationError(
+                "Missing snowball_id in connection config - required for content.ingest",
+                field="snowball_id",
+            )
+
+        # Handle empty results
+        if not files:
+            batch_id = str(uuid.uuid4())
+            self.logger.info(
+                "No files found, emitting empty batch response",
+                connection_id=connection_id,
+                batch_id=batch_id,
+            )
+            yield self._build_empty_batch_response(
+                customer_id=customer_id,
+                connection_id=connection_id,
+                connection_config=connection_config,
+                resource_type="files",
+                next_page_token=next_page_token,
+                batch_id=batch_id,
+                start_time=start_time,
+            )
+            return
+
+        # Generate batch ID for this page
+        batch_id = str(uuid.uuid4())
+        total_files = len(files)
+
+        # Emit one content.ingest message per file
+        for idx, file_data in enumerate(files):
+            is_last_in_batch = (idx == total_files - 1) and (next_page_token is None)
+
+            msg = await self.content_emitter.process_file_for_ingest(
+                file_data=file_data,
+                connection_config=connection_config,
+                customer_id=customer_id,
+                snowball_id=snowball_id,
+                batch_context={
+                    "batch_id": batch_id,
+                    "batch_sequence": idx,
+                    "batch_is_last": is_last_in_batch,
+                    "batch_page_token": next_page_token,
+                },
+            )
+            yield msg
+
+        # Log completion
+        processing_duration_ms = int(
+            (datetime.now(UTC) - start_time).total_seconds() * 1000
+        )
+
+        self.logger.info(
+            "Files fetch completed",
+            connection_id=connection_id,
+            total_files=total_files,
+            processing_duration_ms=processing_duration_ms,
+            has_next_page=bool(next_page_token),
+            batch_id=batch_id,
+        )
