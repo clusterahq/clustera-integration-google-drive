@@ -336,9 +336,27 @@ class FetchHandler(BaseActionHandler):
                 #     yield response
                 pass
 
+            else:
+                raise TerminalError(
+                    f"Unsupported resource type: {resource_type}",
+                    category="validation",
+                    details={"resource_type": resource_type},
+                )
+
         finally:
             # await api_client.close()
             pass
+
+        # Log warning for unimplemented resource types (all TODOs above)
+        self.logger.warning(
+            "Fetch resource type not yet implemented",
+            resource_type=resource_type,
+            connection_id=connection_id,
+        )
+
+        # Make this a proper async generator - yields nothing for unimplemented types
+        return
+        yield  # noqa: unreachable - required to make this an async generator
 
     def _validate_message(self, message: dict[str, Any]) -> None:
         """Validate required fields in fetch message.
