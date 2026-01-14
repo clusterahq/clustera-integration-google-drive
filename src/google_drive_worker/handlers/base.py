@@ -13,6 +13,7 @@ import json
 import uuid
 import structlog
 from clustera_integration_toolkit.storage import S3Client, ObjectStorageConfig
+from clustera_integration_toolkit.control_plane import ControlPlaneClient
 
 from ..utils.errors import IntegrationError
 from ..config import settings
@@ -52,6 +53,24 @@ class BaseIntegrationHandler(ABC):
             region=settings.s3.region or "auto",
         )
         self.s3_client = S3Client(storage_config)
+
+        # Lazy-initialized Control Plane client for state management
+        self._control_plane_client: Optional[ControlPlaneClient] = None
+
+    @property
+    def control_plane_client(self) -> ControlPlaneClient:
+        """Lazy-initialize Control Plane client.
+
+        Returns:
+            Control Plane client instance
+        """
+        if self._control_plane_client is None:
+            self._control_plane_client = ControlPlaneClient(
+                base_url=settings.control_plane.base_url,
+                m2m_token=settings.control_plane.m2m_token,
+                timeout=settings.control_plane.timeout_seconds,
+            )
+        return self._control_plane_client
 
     @abstractmethod
     async def can_handle(self, message: Dict[str, Any]) -> bool:
@@ -155,6 +174,7 @@ class BaseIntegrationHandler(ABC):
         resource_id: str,
         data: Dict[str, Any],
         metadata: Optional[Dict[str, Any]] = None,
+        content: Optional[bytes] = None,
     ) -> Dict[str, Any]:
         """Create an ingestion data envelope with S3 offloading for large payloads.
 
@@ -168,6 +188,7 @@ class BaseIntegrationHandler(ABC):
             resource_id: Resource identifier
             data: The normalized data
             metadata: Optional metadata
+            content: Optional binary content (for exported files)
 
         Returns:
             Complete envelope for ingestion.data topic
@@ -201,6 +222,41 @@ class BaseIntegrationHandler(ABC):
             "idempotency_key": idempotency_key,
             "metadata": default_metadata,
         }
+
+        # Handle content if provided (binary file content)
+        if content:
+            content_size = len(content)
+            self.logger.info(
+                "Binary content provided, offloading to S3",
+                content_size_bytes=content_size,
+                resource_type=resource_type,
+                resource_id=resource_id,
+            )
+
+            # Calculate checksum for content
+            content_checksum = hashlib.sha256(content).hexdigest()
+
+            # Upload content to S3
+            content_s3_key = f"content/{customer_id}/{connection_id}/{message_id}"
+            content_s3_url = await self.s3_client.upload(
+                key=content_s3_key,
+                data=content,
+                content_type="application/octet-stream",
+                metadata={
+                    "customer_id": customer_id,
+                    "connection_id": connection_id,
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "sha256": content_checksum,
+                },
+            )
+
+            # Add content reference to envelope
+            envelope["content_s3_url"] = content_s3_url
+            envelope["metadata"]["content_size_bytes"] = content_size
+            envelope["metadata"]["content_sha256"] = content_checksum
+        else:
+            envelope["content_s3_url"] = None
 
         # Check payload size for S3 offloading
         data_bytes = json.dumps(data).encode("utf-8")

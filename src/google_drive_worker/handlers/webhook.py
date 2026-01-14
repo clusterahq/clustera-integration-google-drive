@@ -128,6 +128,78 @@ class GoogleDriveWebhookHandler(BaseIntegrationHandler):
         finally:
             await api_client.close()
 
+    async def _fetch_file_content(
+        self,
+        api_client: GoogleDriveAPIClient,
+        file_data: Dict[str, Any],
+        connection_id: str,
+    ) -> Optional[bytes]:
+        """Fetch file content for Google Workspace files that need export.
+
+        Args:
+            api_client: Google Drive API client
+            file_data: File metadata from API
+            connection_id: Integration connection ID
+
+        Returns:
+            Exported file content as bytes, or None if not exportable
+        """
+        from ..normalization.mime_types import needs_export, get_export_format
+
+        mime_type = file_data.get("mimeType")
+        file_id = file_data.get("id")
+
+        # Check if this file needs export (Google Workspace files)
+        if not needs_export(mime_type):
+            return None
+
+        # Get the export format
+        export_format = get_export_format(mime_type)
+        if not export_format:
+            self.logger.warning(
+                "File needs export but no export format found",
+                file_id=file_id,
+                mime_type=mime_type,
+                connection_id=connection_id,
+            )
+            return None
+
+        try:
+            self.logger.info(
+                "Exporting Google Workspace file",
+                file_id=file_id,
+                mime_type=mime_type,
+                export_format=export_format,
+                connection_id=connection_id,
+            )
+
+            # Export the file using the API
+            content = await api_client.export_file(
+                file_id=file_id,
+                mime_type=export_format,
+            )
+
+            self.logger.info(
+                "Successfully exported file",
+                file_id=file_id,
+                content_size_bytes=len(content),
+                connection_id=connection_id,
+            )
+
+            return content
+
+        except Exception as e:
+            self.logger.error(
+                "Failed to export file",
+                file_id=file_id,
+                mime_type=mime_type,
+                export_format=export_format,
+                error=str(e),
+                connection_id=connection_id,
+            )
+            # Non-fatal: we still have metadata
+            return None
+
     async def _fetch_changes(
         self,
         api_client: GoogleDriveAPIClient,
@@ -229,6 +301,15 @@ class GoogleDriveWebhookHandler(BaseIntegrationHandler):
                     )
                     continue
 
+                # Fetch content for Google Workspace files
+                file_content = None
+                if not is_folder:
+                    file_content = await self._fetch_file_content(
+                        api_client=api_client,
+                        file_data=file_data,
+                        connection_id=connection_id,
+                    )
+
                 # Normalize the file data
                 resource_type = "folder" if is_folder else "file"
                 resource_id = file_data.get("id")
@@ -247,6 +328,7 @@ class GoogleDriveWebhookHandler(BaseIntegrationHandler):
                     resource_type=resource_type,
                     resource_id=resource_id,
                     data=normalized_data,
+                    content=file_content,
                     metadata={
                         "source": "webhook",
                         "trigger_type": "push_notification",
@@ -254,6 +336,8 @@ class GoogleDriveWebhookHandler(BaseIntegrationHandler):
                         "page_token": page_token[:20] + "..." if len(page_token) > 20 else page_token,
                         "source_format": "google_drive_api_v3",
                         "transformation_version": "1.0.0",
+                        "has_content": file_content is not None,
+                        "content_size_bytes": len(file_content) if file_content else 0,
                     },
                 )
                 total_yielded += 1
