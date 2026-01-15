@@ -154,7 +154,9 @@ def generate_idempotency_key(
     },
     "metadata": {
       "resource_type": "file",
-      "resource_id": "1BxiMVs0XRA5nFMdKvBd..."
+      "resource_id": "1BxiMVs0XRA5nFMdKvBd...",
+      "source_document_url": "https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBd.../view",
+      "source_document_title": "Report.pdf"
     },
     "nonce": "google-drive:conn_abc123:file:1BxiMVs0XRA5nFMdKvBd..."
   }

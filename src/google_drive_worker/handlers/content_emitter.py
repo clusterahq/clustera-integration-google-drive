@@ -608,6 +608,8 @@ class ContentIngestEmitter:
                 - created_at: Creation timestamp (ISO 8601)
                 - modified_at: Last modification timestamp (ISO 8601)
                 - viewed_by_me_time: Last viewed timestamp (ISO 8601, if available)
+                - source_document_url: Direct link to view in Google Drive UI
+                - source_document_title: File name (or "(Untitled)" if not set)
 
         Example output:
             {
@@ -625,18 +627,30 @@ class ContentIngestEmitter:
                 "starred": false,
                 "shared": true,
                 "created_at": "2025-01-15T10:00:00Z",
-                "modified_at": "2025-01-20T15:30:00Z"
+                "modified_at": "2025-01-20T15:30:00Z",
+                "source_document_url": "https://drive.google.com/...",
+                "source_document_title": "Q4 Report.docx"
             }
         """
+        # Build source document fields for consistent cross-provider metadata
+        # source_document_url: Direct link to view in Google Drive UI
+        # source_document_title: File name (with fallback to "(Untitled)")
+        web_view_link = normalized.get("web_view_link")
+        file_name = normalized.get("name")
+        source_document_url = web_view_link if web_view_link else None
+        source_document_title = file_name if file_name else "(Untitled)"
+
         metadata: dict[str, Any] = {
             "drive_id": normalized.get("id"),
-            "name": normalized.get("name"),
+            "name": file_name,
             "mime_type": normalized.get("mime_type"),
             "category": normalized.get("category"),
             "is_folder": normalized.get("is_folder", False),
             "is_google_workspace": normalized.get("is_google_workspace", False),
             "trashed": normalized.get("trashed", False),
             "starred": normalized.get("starred", False),
+            "source_document_url": source_document_url,
+            "source_document_title": source_document_title,
         }
 
         # Add optional fields only if present
