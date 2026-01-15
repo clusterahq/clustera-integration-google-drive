@@ -40,7 +40,7 @@ class WebhookHandler(BaseActionHandler):
     """
 
     SUPPORTED_ACTIONS = {"webhook"}
-    SUPPORTED_METHODS = {"clustera.integration.webhook"}
+    SUPPORTED_METHODS = {"clustera.integration.incoming"}
 
     def __init__(
         self,
@@ -466,6 +466,7 @@ class WebhookHandler(BaseActionHandler):
                 # Use ContentIngestEmitter to build content.ingest message
                 # This ensures consistent message format between webhook and backfill paths
                 yield await self.content_emitter.process_file_for_ingest(
+                    api_client=api_client,
                     file_data=file_data,
                     connection_config=connection_config,
                     customer_id=customer_id,
