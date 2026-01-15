@@ -445,6 +445,7 @@ class GoogleDriveWorker:
         self,
         handler: Any,
         message: Dict[str, Any],
+        connection_id: str,
         connection_config: Dict[str, Any],
     ) -> int:
         """Process message with automatic retries for retriable errors.
@@ -452,6 +453,7 @@ class GoogleDriveWorker:
         Args:
             handler: Handler instance
             message: Message to process
+            connection_id: Integration connection ID (partition key)
             connection_config: Connection configuration
 
         Returns:
@@ -460,9 +462,8 @@ class GoogleDriveWorker:
         record_count = 0
         async for record in handler.process_message(message, connection_config):
             # Plan 35/36: Pass connection_config for snowball extraction
-            await self._produce_record(record, connection_config=connection_config)
+            await self._produce_record(record, connection_id, connection_config=connection_config)
             record_count += 1
-            self.metrics["records_produced"] += 1
         return record_count
 
     async def _handle_message(
@@ -590,7 +591,7 @@ class GoogleDriveWorker:
 
             # Process with retries (handler already found above)
             record_count = await self._process_with_retry(
-                handler, value, connection_config
+                handler, value, connection_id, connection_config
             )
 
             # Track processing time
@@ -677,30 +678,46 @@ class GoogleDriveWorker:
     async def _produce_record(
         self,
         record: Dict[str, Any],
+        connection_id: str,
         connection_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Produce a record to ingestion.data topic with idempotency check.
 
+        Per Plan 37: All records MUST be in JSON-RPC 2.0 format. The record
+        is sent directly without additional wrapping.
+
         Args:
-            record: Normalized record to produce
+            record: Record to produce (must be JSON-RPC 2.0 notification)
+            connection_id: Integration connection ID (partition key)
             connection_config: Connection configuration (for snowball in Plan 35/36)
         """
-        idempotency_key = record.get("idempotency_key")
+        # Per Plan 37: All records must be JSON-RPC 2.0 format
+        if record.get("jsonrpc") != "2.0":
+            self.logger.error(
+                "Non-JSON-RPC record received - this is deprecated per Plan 37",
+                record_keys=list(record.keys()),
+                connection_id=connection_id,
+            )
+            raise ValueError(
+                "All records must be JSON-RPC 2.0 format. "
+                "Legacy format wrapping has been removed per Plan 37."
+            )
+
+        # Extract nonce from JSON-RPC params for idempotency
+        nonce = record.get("params", {}).get("nonce", "")
+        method = record.get("method", "unknown")
 
         # Check idempotency cache (atomic check-and-set)
-        if not self.idempotency_cache.check_and_set(idempotency_key):
+        if nonce and not self.idempotency_cache.check_and_set(nonce):
             # Returns False if key already exists (duplicate)
             self.logger.debug(
                 "Skipping duplicate record",
-                idempotency_key=idempotency_key,
-                resource_type=record.get("resource_type"),
-                resource_id=record.get("resource_id"),
+                nonce=nonce,
+                method=method,
+                connection_id=connection_id,
             )
             self.metrics["duplicates_skipped"] += 1
             return
-
-        topic = "ingestion.data"
-        key = record["integration_connection_id"]
 
         # Check payload size for S3 offloading
         payload_size = len(json.dumps(record).encode("utf-8"))
@@ -713,47 +730,26 @@ class GoogleDriveWorker:
             )
             self.metrics["payloads_offloaded_to_s3"] += 1
 
-        # Plan 35/36: Extract snowball from connection_config
-        config = connection_config or {}
-        snowball = config.get("snowball_clusterspace")
-
-        # Build message using IncomingMessageBuilder for proper JSON-RPC 2.0 format
-        message = IncomingMessageBuilder.build_from_worker(
-            customer_id=record.get("customer_id", "unknown"),
-            integration_provider_name="google-drive",
-            integration_connection_id=key,
-            payload=record,
-            idempotency_key=idempotency_key,
-            event_type=record.get("resource_type", "fetch"),
-            snowball=snowball,  # Plan 35/36: Include snowball in header
-        )
-
-        # Add headers (toolkit producer expects Dict[str, str])
-        headers = {
-            "source": self.settings.service_name,
-            "produced_at": datetime.utcnow().isoformat(),
-            "idempotency_key": idempotency_key,
-        }
-
+        # Send record directly - it's already in JSON-RPC 2.0 format from handlers
         await self.producer.send(
-            topic=topic,
-            key=key,
-            value=message,
-            headers=headers,
+            topic=self.output_topic,
+            key=connection_id,
+            value=record,
+            headers={
+                "source": self.settings.service_name,
+                "produced_at": datetime.utcnow().isoformat(),
+                "nonce": nonce,
+            },
         )
 
-        # Note: idempotency key already added to cache via check_and_set() above
+        self.metrics["records_produced"] += 1
 
         self.logger.info(
-            "message_produced_to_kafka",
-            topic=topic,
-            key=key,
-            record_type="data",
-            resource_type=record.get("resource_type"),
-            resource_id=record.get("resource_id"),
-            idempotency_key=idempotency_key,
-            message_id=record.get("message_id"),
-            headers=headers
+            "Record produced to Kafka",
+            topic=self.output_topic,
+            connection_id=connection_id,
+            method=method,
+            nonce=nonce[:50] + "..." if len(nonce) > 50 else nonce,
         )
 
     async def _produce_error(
