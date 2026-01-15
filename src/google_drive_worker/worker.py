@@ -526,25 +526,8 @@ class GoogleDriveWorker:
                 return
 
         try:
-            # Handle "pending_lookup" case for webhooks that don't have connection_id
-            if connection_id == "pending_lookup":
-                self.logger.info(
-                    "Connection ID is pending_lookup, handler must resolve from payload",
-                    method=method,
-                    action=action,
-                )
-                connection_config: Dict[str, Any] = {}
-            else:
-                # Fetch connection configuration from Control Plane
-                # TODO: Implement actual Control Plane call
-                connection_config = {
-                    "connection_id": connection_id,
-                    "access_token": "placeholder_access_token",
-                }
-
-            # Route to handler based on method (JSON-RPC) or action (legacy)
+            # Route to handler first so we can use its fetch_connection_config method
             handler = None
-
             for h in self.handlers:
                 if h.can_handle(value):
                     handler = h
@@ -561,7 +544,51 @@ class GoogleDriveWorker:
                 await self.consumer.commit()
                 return
 
-            # Process with retries
+            # Handle "pending_lookup" case for webhooks that don't have connection_id
+            if connection_id == "pending_lookup":
+                self.logger.info(
+                    "Connection ID is pending_lookup, handler must resolve from payload",
+                    method=method,
+                    action=action,
+                )
+                connection_config: Dict[str, Any] = {}
+            else:
+                # For teardown messages with credentials in the message, use those
+                # instead of calling Control Plane (connection may already be deleted)
+                params = value.get("params", {})
+                has_message_credentials = bool(params.get("credentials", {}).get("access_token"))
+
+                if method == "clustera.integration.connection.teardown" and has_message_credentials:
+                    self.logger.info(
+                        "Using credentials from teardown message",
+                        connection_id=connection_id,
+                    )
+                    connection_config = handler.build_connection_config_from_message(
+                        value, connection_id
+                    )
+                else:
+                    # Fetch connection configuration from Control Plane
+                    connection_config = await handler.fetch_connection_config(connection_id)
+
+                    # For init messages, merge metadata from message with Control Plane config
+                    if method == "clustera.integration.connection.initialize":
+                        msg_metadata = handler.extract_metadata_from_message(value)
+                        # Override with message metadata if provided (more up-to-date)
+                        if msg_metadata.get("snowball_id"):
+                            connection_config["snowball_id"] = msg_metadata["snowball_id"]
+                        if msg_metadata.get("external_id"):
+                            connection_config["external_id"] = msg_metadata["external_id"]
+                            connection_config["user_id"] = msg_metadata["external_id"]
+                        if msg_metadata.get("connection_config"):
+                            connection_config["connection_config"] = msg_metadata["connection_config"]
+                        self.logger.debug(
+                            "Merged init message metadata with Control Plane config",
+                            connection_id=connection_id,
+                            has_snowball_id=bool(msg_metadata.get("snowball_id")),
+                            has_external_id=bool(msg_metadata.get("external_id")),
+                        )
+
+            # Process with retries (handler already found above)
             record_count = await self._process_with_retry(
                 handler, value, connection_config
             )
