@@ -14,12 +14,13 @@ GOOGLE_SCRIPT = "application/vnd.google-apps.script"
 GOOGLE_JAMBOARD = "application/vnd.google-apps.jam"
 
 # Export format mappings for Google Workspace files
+# Prefer plain text formats where possible for better downstream processing
 EXPORT_FORMATS = {
-    GOOGLE_DOC: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
-    GOOGLE_SHEET: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
-    GOOGLE_SLIDE: "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
-    GOOGLE_DRAWING: "image/png",  # Export drawings as PNG
-    GOOGLE_SCRIPT: "application/vnd.google-apps.script+json",  # Export as JSON
+    GOOGLE_DOC: "text/plain",  # .txt - plain text for better LLM processing
+    GOOGLE_SHEET: "text/csv",  # .csv - plain text tabular data
+    GOOGLE_SLIDE: "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx - no plain text option
+    GOOGLE_DRAWING: "image/png",  # .png - no plain text option for images
+    GOOGLE_SCRIPT: "application/vnd.google-apps.script+json",  # .json - already text-based
 }
 
 # Set of all Google Workspace MIME types
@@ -204,8 +205,8 @@ def get_file_extension(mime_type: str) -> Optional[str]:
     """
     extension_map = {
         # Google Workspace (when exported)
-        GOOGLE_DOC: ".docx",
-        GOOGLE_SHEET: ".xlsx",
+        GOOGLE_DOC: ".txt",
+        GOOGLE_SHEET: ".csv",
         GOOGLE_SLIDE: ".pptx",
         GOOGLE_DRAWING: ".png",
         GOOGLE_SCRIPT: ".json",

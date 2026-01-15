@@ -547,6 +547,7 @@ class FetchHandler(BaseActionHandler):
             is_last_in_batch = (idx == total_files - 1) and (next_page_token is None)
 
             msg = await self.content_emitter.process_file_for_ingest(
+                api_client=api_client,
                 file_data=file_data,
                 connection_config=connection_config,
                 customer_id=customer_id,

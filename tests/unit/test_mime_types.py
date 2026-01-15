@@ -55,9 +55,9 @@ class TestMimeTypeUtilities:
 
     def test_get_export_format(self):
         """Test export format retrieval."""
-        # Google Workspace files with export formats
-        assert get_export_format(GOOGLE_DOC) == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        assert get_export_format(GOOGLE_SHEET) == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        # Google Workspace files with export formats (plain text where possible)
+        assert get_export_format(GOOGLE_DOC) == "text/plain"
+        assert get_export_format(GOOGLE_SHEET) == "text/csv"
         assert (
             get_export_format(GOOGLE_SLIDE)
             == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -173,9 +173,9 @@ class TestMimeTypeUtilities:
 
     def test_get_file_extension(self):
         """Test file extension determination."""
-        # Google Workspace (exported)
-        assert get_file_extension(GOOGLE_DOC) == ".docx"
-        assert get_file_extension(GOOGLE_SHEET) == ".xlsx"
+        # Google Workspace (exported to plain text where possible)
+        assert get_file_extension(GOOGLE_DOC) == ".txt"
+        assert get_file_extension(GOOGLE_SHEET) == ".csv"
         assert get_file_extension(GOOGLE_SLIDE) == ".pptx"
         assert get_file_extension(GOOGLE_DRAWING) == ".png"
         assert get_file_extension(GOOGLE_SCRIPT) == ".json"

@@ -215,6 +215,83 @@ class TestGoogleDriveAPIClient:
         assert "File not found" in str(exc_info.value)
         assert not exc_info.value.retriable
 
+    # download_file tests
+
+    @respx.mock
+    async def test_download_file_success(self, api_client):
+        """Test successful file download."""
+        # Mock binary response (PDF content)
+        pdf_content = b"%PDF-1.4\nPDF binary content here..."
+
+        respx.get("https://www.googleapis.com/drive/v3/files/file123").mock(
+            return_value=httpx.Response(200, content=pdf_content)
+        )
+
+        # Call method
+        result = await api_client.download_file("file123")
+
+        # Verify result
+        assert result == pdf_content
+        assert isinstance(result, bytes)
+
+        # Verify request used alt=media
+        request = respx.calls.last.request
+        assert "alt=media" in str(request.url)
+
+    @respx.mock
+    async def test_download_file_image(self, api_client):
+        """Test downloading image file."""
+        # Mock image binary content
+        image_content = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR..."
+
+        respx.get("https://www.googleapis.com/drive/v3/files/img456").mock(
+            return_value=httpx.Response(200, content=image_content)
+        )
+
+        # Call method
+        result = await api_client.download_file("img456")
+
+        # Verify result
+        assert result == image_content
+        assert isinstance(result, bytes)
+
+    @respx.mock
+    async def test_download_file_not_found(self, api_client):
+        """Test handling of file not found (404) during download."""
+        # Mock 404 response
+        error_response = {
+            "error": {
+                "code": 404,
+                "message": "File not found: file789",
+            }
+        }
+
+        respx.get("https://www.googleapis.com/drive/v3/files/file789").mock(
+            return_value=httpx.Response(404, json=error_response)
+        )
+
+        # Call should raise TerminalError
+        with pytest.raises(TerminalError) as exc_info:
+            await api_client.download_file("file789")
+
+        assert "File not found" in str(exc_info.value)
+
+    @respx.mock
+    async def test_download_file_rate_limit(self, api_client):
+        """Test handling of rate limit during download."""
+        respx.get("https://www.googleapis.com/drive/v3/files/file_limited").mock(
+            return_value=httpx.Response(
+                429,
+                headers={"Retry-After": "30"},
+                text="Rate limit exceeded",
+            )
+        )
+
+        with pytest.raises(RateLimitError) as exc_info:
+            await api_client.download_file("file_limited")
+
+        assert exc_info.value.retry_after == 30
+
     # export_file tests
 
     @respx.mock

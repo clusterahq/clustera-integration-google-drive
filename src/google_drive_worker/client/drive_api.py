@@ -206,6 +206,49 @@ class GoogleDriveAPIClient:
 
         return response
 
+    async def download_file(
+        self,
+        file_id: str,
+    ) -> bytes:
+        """Download file content for non-Google Workspace files.
+
+        Used for PDFs, images, videos, and other binary files stored in Drive.
+        For Google Workspace files (Docs, Sheets, Slides), use export_file() instead.
+
+        Uses GET /files/{fileId}?alt=media to retrieve raw file content.
+
+        Args:
+            file_id: The ID of the file to download
+
+        Returns:
+            File content as bytes
+
+        Raises:
+            RateLimitError: If API rate limit exceeded
+            RetriableError: For temporary failures
+            TerminalError: For permanent failures (file not found, no access)
+        """
+        logger.info(
+            "Downloading file content: file_id=%s",
+            file_id,
+        )
+
+        params = {"alt": "media"}
+        url = f"{self.BASE_URL}/files/{file_id}"
+
+        # Download endpoint returns raw bytes, not JSON
+        response = await self._make_request(
+            "GET", url, params=params, parse_json=False
+        )
+
+        logger.info(
+            "Successfully downloaded file: file_id=%s, size_bytes=%s",
+            file_id,
+            len(response) if isinstance(response, bytes) else 0,
+        )
+
+        return response
+
     async def export_file(
         self,
         file_id: str,
